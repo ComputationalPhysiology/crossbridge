@@ -2,6 +2,11 @@ format: jb-book
 root: README
 
 parts:
+  - caption: Examples
+    chapters:
+    - file: "demo/holzapfel_torord_isotonic"
+    - file: "demo/holzapfel_torord_isometric"
+
   - caption: Python API
     chapters:
     - file: "docs/api"
