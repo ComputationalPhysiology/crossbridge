@@ -17,7 +17,7 @@ requires-python = ">=3.11"
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
-demos = ["matplotlib", "zero-mech", "gotranx", "scipy", "tqdm"]
+demos = ["matplotlib", "zero-mech", "gotranx", "scipy", "tqdm", "numba"]
 docs = [
     "jupyter-book<2.0",
     "jupytext",
