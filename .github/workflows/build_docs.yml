@@ -1,0 +1,39 @@
+name: Build documentation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+
+jobs:
+
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      PUBLISH_DIR: ./_build/html
+      CI: 1
+
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install git+https://github.com/hgrecco/pint.git
+          python3 -m pip install ".[docs]"
+
+      - name: Build docs
+        run: jupyter-book build -W --keep-going .
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ env.PUBLISH_DIR }}
