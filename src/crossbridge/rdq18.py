@@ -2,13 +2,13 @@ import numpy as np
 
 
 class RDQ18:
-    def __init__(self, num_cells, Ta_max=100.0, params=None):
+    def __init__(self, num_cells: int, Ta_max: float = 100.0, params=None):
         """
         Vectorized implementation of the RDQ18 Sarcomere model.
         """
-        self.num_cells = num_cells
+        self.num_cells = int(num_cells)
         self.Ta_max = Ta_max
-        self.p = self._get_default_parameters()
+        self.p = type(self).default_parameters()
         if params:
             self.p.update(params)
 
@@ -48,7 +48,8 @@ class RDQ18:
         self.PhiL = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
         self.PhiR = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
 
-    def _get_default_parameters(self):
+    @staticmethod
+    def default_parameters():
         p = {}
         # Simulation
         p["dt"] = 2.5e-5
@@ -63,13 +64,6 @@ class RDQ18:
         p["muA"] = 0.05
         p["alpha"] = 0.2
         p["gammaF0"] = 0.0
-
-        # Calcium
-        p["c0"] = 0.1
-        p["cmax"] = 1.1
-        p["tau1"] = 0.02
-        p["tau2"] = 0.11
-        p["t0"] = 0.1
 
         # Sarcomere Geometry & Rates
         p["LA"] = 1.2
@@ -130,8 +124,16 @@ class RDQ18:
 
         return resLA, resRA
 
-    def update_probabilities(self, SL, Ca_t):
-        """Update PC matrix based on current SL (vector) and Ca (scalar)."""
+    def update_probabilities(self, SL: np.ndarray, Ca_t: float):
+        """Update PC matrix based on current SL (vector) and Ca (scalar).
+
+        Parameters:
+        -----------
+        SL : np.ndarray
+            Current sarcomere lengths for each cell (shape: (num_cells,)).
+        Ca_t : float
+            Current calcium concentration (scalar) in micro molar.
+        """
         # Reshape Chi for broadcasting: (nu, 1, 1, 1, 1, num_cells)
         ChiLA, ChiRA = self._compute_Chi(SL)
         ChiLA = ChiLA[:, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
@@ -169,16 +171,26 @@ class RDQ18:
         # 0N -> 0P
         self.PC[:, :, 0, :, 3, :] = Knp0_val * term_common[:, :, 0, :, 0, :]
 
-    def advance_ODE(self, dt_step, Ca_val, SL_vals):
+    def advance_ODE(self, dt_step: float, Ca_val: float, SL_vals: np.ndarray) -> None:
         """
         Advance the state of all cells by dt_step.
+
+        This function internally updates probabilities based on current SL and Ca,
+        and then integrates the ODEs using an adaptive time-stepping approach to ensure stability.
+
+        Parameters:
+        -----------
+        dt_step : float
+            The total time to advance the ODEs.
+        Ca_val : float
+            The current calcium concentration (scalar) in micro molar.
+        SL_vals : np.ndarray
+            Current sarcomere lengths for each cell (shape: (num_cells,)).
+
         """
         self.update_probabilities(SL_vals, Ca_val)
 
         dt_acc = 0
-
-        # [FIX] Removed ODEPeriod from here. We integrate every step,
-        # so the flux should not be scaled by 10.
 
         while dt_acc < dt_step:
             xODE2 = np.sum(self.xODE, axis=3)
@@ -223,7 +235,6 @@ class RDQ18:
 
             flux = np.sum(termC + termL + termR, axis=4)
 
-            # [FIX] Update step uses dt_curr directly, not scaled by ODEPeriod
             xODEnew = self.xODE + self.dt * flux
 
             # Check for instability/bounds
@@ -237,7 +248,7 @@ class RDQ18:
             self.xODE = xODEnew
             dt_acc += dt_curr
 
-    def compute_permissivity(self):
+    def compute_permissivity(self) -> np.ndarray:
         """
         Compute the fraction of permissive states (1P + 0P) for each cell.
         """
