@@ -445,8 +445,8 @@ def plot_fig_15_16_coupled(save=True):
 
 if __name__ == "__main__":
     print("Starting reproduction of paper figures...")
-    # plot_fig_6_7_8_9()
+    plot_fig_6_7_8_9()
     plot_fig_11_12_13()
-    # plot_fig_14_ktr()
-    # plot_fig_15_16_coupled()
-    # print("Done.")
+    plot_fig_14_ktr()
+    plot_fig_15_16_coupled()
+    print("Done.")

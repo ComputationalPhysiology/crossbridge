@@ -1,8 +1,62 @@
+"""
+Reduced-Order Model for Sarcomere Dynamics (RDQ18)
+
+This module implements the reduced-order Ordinary Differential Equation (ODE) model
+for the mechanical activation of cardiac myofilaments, as proposed by Regazzoni,
+Dedè, and Quarteroni (2018).
+
+The model derives from a spatially explicit continuous-time Markov Chain (CTMC)
+that captures nearest-neighbor cooperative interactions along the myofilaments
+(e.g., how the attachment of one crossbridge facilitates the attachment of neighbors).
+By assuming conditional independence of specific sets of events, the original system
+of ~10^21 degrees of freedom is reduced to a highly efficient system of ~2200 ODEs,
+achieving a ~10,000x computational speedup without sacrificing the spatial fidelity
+required to model length-dependent activation.
+
+Key Features:
+-------------
+- **Vectorization**: Designed to simulate multiple independent cells or integration
+  points simultaneously via the `num_cells` parameter, making it highly suitable
+  for tissue-level finite element (FEM) or 0D coupled electromechanics simulations.
+- **Length-Dependent Activation**: Explicitly models the overlap between actin and
+  myosin filaments based on current Sarcomere Length (SL), naturally reproducing
+  the macroscopic Frank-Starling mechanism.
+- **Cooperativity**: Captures the steep, non-linear force-calcium relationship typical
+  of cardiac muscle dynamics.
+
+Reference:
+----------
+Regazzoni, F., Dedè, L., & Quarteroni, A. (2018). Active contraction of cardiac cells:
+a reduced model for sarcomere dynamics with cooperative interactions.
+Biomechanics and Modeling in Mechanobiology, 17(6), 1663-1686.
+https://doi.org/10.1007/s10237-018-1049-0
+
+Example Usage:
+--------------
+>>> import numpy as np
+>>> from crossbridge.rdq18 import RDQ18
+>>>
+>>> # Initialize for 100 cells/integration points
+>>> model = RDQ18(num_cells=100)
+>>>
+>>> # Define inputs for the current time step
+>>> dt = 2.5e-5
+>>> calcium_uM = np.full(100, 1.0)  # Intracellular calcium (1.0 uM)
+>>> SL_um = np.full(100, 2.2)       # Sarcomere length (2.2 um)
+>>>
+>>> # Advance the model by one time step
+>>> model.advance_ODE(dt, Ca_val=calcium_uM, SL_vals=SL_um)
+>>>
+>>> # Compute the fraction of permissive crossbridges (proxy for active tension)
+>>> permissivity = model.compute_permissivity()
+"""
+
 import numpy as np
+import numpy.typing as npt
 
 
 class RDQ18:
-    def __init__(self, num_cells, Ta_max=100.0, params=None):
+    def __init__(self, num_cells: int, Ta_max=100.0, params=None):
         """
         Vectorized implementation of the RDQ18 Sarcomere model.
         """
@@ -52,24 +106,6 @@ class RDQ18:
         p = {}
         # Simulation
         p["dt"] = 2.5e-5
-        p["T"] = 1.0
-        p["CouplingPeriod"] = 10
-        p["ODEPeriod"] = 10
-        p["ProbUpdatePeriod"] = 10
-        p["PlotPeriod"] = 1000
-
-        # Macroscopic / Reference Lengths
-        p["l0"] = 2.2  # Reference sarcomere length [um]
-        p["muA"] = 0.05
-        p["alpha"] = 0.2
-        p["gammaF0"] = 0.0
-
-        # Calcium
-        p["c0"] = 0.1
-        p["cmax"] = 1.1
-        p["tau1"] = 0.02
-        p["tau2"] = 0.11
-        p["t0"] = 0.1
 
         # Sarcomere Geometry & Rates
         p["LA"] = 1.2
@@ -88,8 +124,6 @@ class RDQ18:
         p["aL"] = 0.1
 
         # Calculated constants
-        p["Kpn0"] = p["Kbasic"] * p["gamma"] ** 2
-        p["Kpn1"] = p["Kbasic"] * p["gamma"] ** 2
         p["K1on"] = p["Kon"]
         p["K1off"] = p["Koff"] / p["mu"]
         return p
@@ -103,7 +137,7 @@ class RDQ18:
         Q = lambda SL: p["Q0"] - p["alphaQ"] * (p["SLQ"] - SL) * (SL < p["SLQ"])
         return xi, xAZ, xLA, xRA, Q
 
-    def _compute_Chi(self, SL):
+    def _compute_Chi(self, SL: npt.NDArray[np.float64]):
         """Vectorized computation of Chi functions."""
         xi, xAZ, xLA, xRA, _ = self.funcs
 
@@ -130,8 +164,14 @@ class RDQ18:
 
         return resLA, resRA
 
-    def update_probabilities(self, SL, Ca_t):
+    def update_probabilities(
+        self, SL: npt.NDArray[np.float64], Ca_t: float | npt.NDArray[np.float64]
+    ):
         """Update PC matrix based on current SL (vector) and Ca (scalar)."""
+
+        Kpn0 = self.p["Kbasic"] * self.p["gamma"] ** 2
+        Kpn1 = self.p["Kbasic"] * self.p["gamma"] ** 2
+
         # Reshape Chi for broadcasting: (nu, 1, 1, 1, 1, num_cells)
         ChiLA, ChiRA = self._compute_Chi(SL)
         ChiLA = ChiLA[:, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
@@ -151,12 +191,8 @@ class RDQ18:
         self.PC[:] = 0.0
 
         self.PC[:, :, 1, :, 0, :] = self.p["Koff"]  # 1N -> 0N
-        self.PC[:, :, 3, :, 0, :] = (
-            self.p["Kpn0"] * self.gammaMinusExp[:, :, 0, :, 0, :]
-        )  # 0P -> 0N
-        self.PC[:, :, 2, :, 1, :] = (
-            self.p["Kpn1"] * self.gammaMinusExp[:, :, 0, :, 0, :]
-        )  # 1P -> 1N
+        self.PC[:, :, 3, :, 0, :] = Kpn0 * self.gammaMinusExp[:, :, 0, :, 0, :]  # 0P -> 0N
+        self.PC[:, :, 2, :, 1, :] = Kpn1 * self.gammaMinusExp[:, :, 0, :, 0, :]  # 1P -> 1N
         self.PC[:, :, 2, :, 3, :] = self.p["K1off"]  # 1P -> 0P
 
         # Dynamic Rates
@@ -169,16 +205,34 @@ class RDQ18:
         # 0N -> 0P
         self.PC[:, :, 0, :, 3, :] = Knp0_val * term_common[:, :, 0, :, 0, :]
 
-    def advance_ODE(self, dt_step, Ca_val, SL_vals):
+    def advance_ODE(
+        self,
+        dt_step: float,
+        Ca_val: float | npt.NDArray[np.float64],
+        SL_vals: float | npt.NDArray[np.float64],
+    ) -> None:
         """
         Advance the state of all cells by dt_step.
         """
+        try:
+            N_val = len(SL_vals)  # type: ignore[arg-type]
+        except TypeError:
+            SL_vals = np.full(self.num_cells, SL_vals)
+            N_val = self.num_cells
+
+        assert N_val == self.num_cells, "SL_vals length must match num_cells"
+
+        try:
+            N_val = len(Ca_val)  # type: ignore[arg-type]
+        except TypeError:
+            pass
+        else:
+            assert N_val == self.num_cells, (
+                f"Ca_val length {N_val} must match num_cells {self.num_cells}"
+            )
         self.update_probabilities(SL_vals, Ca_val)
 
         dt_acc = 0
-
-        # [FIX] Removed ODEPeriod from here. We integrate every step,
-        # so the flux should not be scaled by 10.
 
         while dt_acc < dt_step:
             xODE2 = np.sum(self.xODE, axis=3)
@@ -186,7 +240,7 @@ class RDQ18:
             xODErep = np.tile(self.xODE[:, :, :, :, np.newaxis, :], (1, 1, 1, 1, 4, 1))
 
             # --- PhiC ---
-            self.PhiC = self.PC[1 : self.nu - 1, ...] * xODErep
+            self.PhiC[:] = self.PC[1 : self.nu - 1, ...] * xODErep
 
             # --- PhiL ---
             num_L = np.sum(self.PhiC[0 : self.nu - 3], axis=1)
@@ -223,7 +277,6 @@ class RDQ18:
 
             flux = np.sum(termC + termL + termR, axis=4)
 
-            # [FIX] Update step uses dt_curr directly, not scaled by ODEPeriod
             xODEnew = self.xODE + self.dt * flux
 
             # Check for instability/bounds
