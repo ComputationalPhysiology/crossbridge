@@ -133,8 +133,8 @@ dt_sarc = 2.5e-5
 
 sarcomere_parms = RDQ18.default_parameters()
 sarcomere_parms["dt"] = dt_sarc
-sarcomere_parms["T"] = BCL * 1e-3
-sl0 = sarcomere_parms["l0"]
+# Resting sarcomere length (um)
+sl0 = 2.2
 
 sarcomere = RDQ18(num_cells=1, Ta_max=150.0, params=sarcomere_parms)
 

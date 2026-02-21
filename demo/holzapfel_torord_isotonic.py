@@ -203,8 +203,8 @@ dt_sarc = 2.5e-5  # Internal ODE time step for RDQ18 stability
 # Setup RDQ18 parameters
 sarcomere_parms = RDQ18.default_parameters()
 sarcomere_parms["dt"] = dt_sarc
-sarcomere_parms["T"] = BCL * 1e-3  # Total simulation time per beat in seconds
-sl0 = sarcomere_parms["l0"]  # Resting sarcomere length (usually ~2.2 um)
+# Resting sarcomere length (usually ~2.2 um)
+sl0 = 2.2
 
 # Initialize the model (Ta_max scales the normalized permissivity to physical stress)
 sarcomere = RDQ18(num_cells=1, Ta_max=150.0, params=sarcomere_parms)

@@ -56,13 +56,13 @@ import numpy.typing as npt
 
 
 class RDQ18:
-    def __init__(self, num_cells: int, Ta_max=100.0, params=None):
+    def __init__(self, num_cells: int, Ta_max: float = 100.0, params=None):
         """
         Vectorized implementation of the RDQ18 Sarcomere model.
         """
-        self.num_cells = num_cells
+        self.num_cells = int(num_cells)
         self.Ta_max = Ta_max
-        self.p = self._get_default_parameters()
+        self.p = type(self).default_parameters()
         if params:
             self.p.update(params)
 
@@ -102,7 +102,8 @@ class RDQ18:
         self.PhiL = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
         self.PhiR = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
 
-    def _get_default_parameters(self):
+    @staticmethod
+    def default_parameters():
         p = {}
         # Simulation
         p["dt"] = 2.5e-5
@@ -213,6 +214,19 @@ class RDQ18:
     ) -> None:
         """
         Advance the state of all cells by dt_step.
+
+        This function internally updates probabilities based on current SL and Ca,
+        and then integrates the ODEs using an adaptive time-stepping approach to ensure stability.
+
+        Parameters:
+        -----------
+        dt_step : float
+            The total time to advance the ODEs.
+        Ca_val : float
+            The current calcium concentration (scalar) in micro molar.
+        SL_vals : np.ndarray
+            Current sarcomere lengths for each cell (shape: (num_cells,)).
+
         """
         try:
             N_val = len(SL_vals)  # type: ignore[arg-type]
@@ -290,7 +304,7 @@ class RDQ18:
             self.xODE = xODEnew
             dt_acc += dt_curr
 
-    def compute_permissivity(self):
+    def compute_permissivity(self) -> np.ndarray:
         """
         Compute the fraction of permissive states (1P + 0P) for each cell.
         """
