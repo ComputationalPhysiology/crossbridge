@@ -10,6 +10,7 @@
 # %%
 from pathlib import Path
 from tqdm import tqdm
+import os
 import urllib.request
 import gotranx.cli.cellml2ode
 import gotranx.cli.gotran2py
@@ -20,6 +21,12 @@ import numba
 import matplotlib.pyplot as plt
 import sympy  # noqa: F401
 import zero_mech
+
+if os.getenv("CI"):
+
+    def tqdm(*args, **kwargs):  # noqa: F811
+        return args[0]
+
 
 from crossbridge import RDQ18
 
