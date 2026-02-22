@@ -4,7 +4,7 @@ root: README
 parts:
   - caption: Examples
     chapters:
-    - file: "demo/plot"
+    - file: "demo/interactive_plot"
     - file: "demo/holzapfel_torord_isotonic"
     - file: "demo/holzapfel_torord_isometric"
 

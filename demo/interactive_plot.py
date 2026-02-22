@@ -120,7 +120,6 @@ iterPlot = 0
 
 # %%
 # --- 2. Simulation Loop ---
-
 for iterMicro in range(1, maxiterMicro + 1):
     t = iterMicro * dt
 
@@ -277,3 +276,6 @@ print(f"Total Simulation Time: {time.time() - initial_time:.2f}s")
 if interactive_plotting:
     plt.ioff()
 plt.show()
+
+# %% [markdown]
+# ![_](https://github.com/user-attachments/assets/e0bb2dc4-81d4-4e18-b626-97b3480088f3)

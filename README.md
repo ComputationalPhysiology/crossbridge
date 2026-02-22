@@ -18,7 +18,7 @@ The package requires Python 3.11+. You can install the base package and its depe
 
 To install the library from the source code:
 ```bash
-git clone [https://github.com/ComputationalPhysiology/crossbridge.git](https://github.com/ComputationalPhysiology/crossbridge.git)
+git clone https://github.com/ComputationalPhysiology/crossbridge.git
 cd crossbridge
 pip install .
 ```
@@ -62,15 +62,18 @@ for i, (Cai, SLi) in enumerate(zip(Ca, SL)):
 
 import matplotlib.pyplot as plt
 
-fig, ax = plt.subplots(3, 1, sharex=True)
-ax[0].plot(t, Ca, label="Calcium")
-ax[1].plot(t, SL, label="Sarcomere Length")
-ax[2].plot(t, Ta, label="Active Tension")
+fig, ax = plt.subplots(3, 1, sharex=True, figsize=(8, 6))
+ax[0].plot(t, Ca)
+ax[0].set_ylabel("Calcium [uM]")
+ax[1].plot(t, SL)
+ax[1].set_ylabel("Sarcomere Length [um]")
+ax[2].plot(t, Ta)
+ax[2].set_ylabel("Active Tension [kPa]")
 ax[2].set_xlabel("Time [s]")
 fig.tight_layout()
 plt.show()
 ```
-![Example Output](https://private-user-images.githubusercontent.com/2010323/553025846-707646bb-761c-4dfa-a515-5fd7ce7ffbe6.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NzE2ODkzMzIsIm5iZiI6MTc3MTY4OTAzMiwicGF0aCI6Ii8yMDEwMzIzLzU1MzAyNTg0Ni03MDc2NDZiYi03NjFjLTRkZmEtYTUxNS01ZmQ3Y2U3ZmZiZTYucG5nP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9QUtJQVZDT0RZTFNBNTNQUUs0WkElMkYyMDI2MDIyMSUyRnVzLWVhc3QtMSUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjAyMjFUMTU1MDMyWiZYLUFtei1FeHBpcmVzPTMwMCZYLUFtei1TaWduYXR1cmU9MTFhYTcwZjc5NTJhMDgzMTcyZjBlZmZkMTU0MGE0NjUwNjgzNzQxODUxMjA4ZWQ1MjZlNTQ3MzA0NWQ0MjZkMSZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QifQ.RAsMX55qjLe0-atRQ4dSAJhol3FXCU5VNkYaxIBFHMM)
+![Example Output](https://github.com/user-attachments/assets/4d07bea6-9f5d-4aae-a1df-2debe6199999)
 
 ## Coupling to Electrophysiology and Mechanics
 Most cellular and tissue-level simulations will require coupling the `RDQ18` model to electrophysiology and mechanics. The `advance_ODE` method is designed to be called at every time step of a larger simulation loop, allowing the sarcomere dynamics to evolve in response to changing calcium and length conditions.
