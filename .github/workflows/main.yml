@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
         os: [ubuntu-latest, windows-latest, macos-latest]
 
 
@@ -23,16 +23,15 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install circulation
+    - name: Install crossbridge
       run: |
-        python3 -m pip install git+https://github.com/hgrecco/pint.git
         python -m pip install -e ".[test]"
     - name: Test with pytest
       run: |
-        python -m pytest --cov=circulation --cov-report html --cov-report xml --cov-report term-missing -v
+        python -m pytest --cov=crossbridge --cov-report html --cov-report xml --cov-report term-missing -v
 
     - name: Coverage report
-      if: matrix.python-version == '3.10' && matrix.os == 'ubuntu-latest'
+      if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
       run: |
         python3 -m coverage report | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY
         python3 -m coverage json
@@ -40,8 +39,8 @@ jobs:
         echo "total=$TOTAL" >> $GITHUB_ENV
 
     - name: Upload HTML report.
-      if: matrix.python-version == '3.10' && matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v7
+      if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v6
       with:
         name: html-report
         path: htmlcov

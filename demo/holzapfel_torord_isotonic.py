@@ -307,7 +307,3 @@ for axi in ax.flatten():
 fig.tight_layout()
 fig.savefig("holzapfel_torord_coupled.png")
 plt.show()
-
-# %% [markdown]
-# **Next Steps:**
-# Would you like me to expand on how to configure this for an **isometric** contraction (where $\lambda$ is fixed to $1.0$ and we measure the resulting stress $P_{11}$), or are you ready to test this free contraction?
