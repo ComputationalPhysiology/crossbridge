@@ -1,9 +1,50 @@
 """
 Reduced-Order Model for Sarcomere Dynamics (RDQ18)
 
-This module implements the reduced-order Ordinary Differential Equation (ODE)
-model for the mechanical activation of cardiac myofilaments, as proposed by
-Regazzoni, Dedè, and Quarteroni (2018).
+This module implements the reduced-order Ordinary Differential Equation (ODE) model
+for the mechanical activation of cardiac myofilaments, as proposed by Regazzoni,
+Dedè, and Quarteroni (2018).
+The model derives from a spatially explicit continuous-time Markov Chain (CTMC)
+that captures nearest-neighbor cooperative interactions along the myofilaments
+(e.g., how the attachment of one crossbridge facilitates the attachment of neighbors).
+By assuming conditional independence of specific sets of events, the original system
+of ~10^21 degrees of freedom is reduced to a highly efficient system of ~2200 ODEs,
+achieving a ~10,000x computational speedup without sacrificing the spatial fidelity
+required to model length-dependent activation.
+Key Features:
+-------------
+- **Vectorization**: Designed to simulate multiple independent cells or integration
+  points simultaneously via the `num_cells` parameter, making it highly suitable
+  for tissue-level finite element (FEM) or 0D coupled electromechanics simulations.
+- **Length-Dependent Activation**: Explicitly models the overlap between actin and
+  myosin filaments based on current Sarcomere Length (SL), naturally reproducing
+  the macroscopic Frank-Starling mechanism.
+- **Cooperativity**: Captures the steep, non-linear force-calcium relationship typical
+  of cardiac muscle dynamics.
+Reference:
+----------
+Regazzoni, F., Dedè, L., & Quarteroni, A. (2018). Active contraction of cardiac cells:
+a reduced model for sarcomere dynamics with cooperative interactions.
+Biomechanics and Modeling in Mechanobiology, 17(6), 1663-1686.
+https://doi.org/10.1007/s10237-018-1049-0
+Example Usage:
+--------------
+>>> import numpy as np
+>>> from crossbridge.rdq18 import RDQ18
+>>>
+>>> # Initialize for 100 cells/integration points
+>>> model = RDQ18(num_cells=100)
+>>>
+>>> # Define inputs for the current time step
+>>> dt = 2.5e-5
+>>> calcium_uM = np.full(100, 1.0)  # Intracellular calcium (1.0 uM)
+>>> SL_um = np.full(100, 2.2)       # Sarcomere length (2.2 um)
+>>>
+>>> # Advance the model by one time step
+>>> model.advance_ODE(dt, Ca_val=calcium_uM, SL_vals=SL_um)
+>>>
+>>> # Compute the fraction of permissive crossbridges (proxy for active tension)
+>>> permissivity = model.compute_permissivity()
 """
 
 import numpy as np
