@@ -11,6 +11,7 @@ By assuming conditional independence of specific sets of events, the original sy
 of ~10^21 degrees of freedom is reduced to a highly efficient system of ~2200 ODEs,
 achieving a ~10,000x computational speedup without sacrificing the spatial fidelity
 required to model length-dependent activation.
+
 Key Features:
 -------------
 - **Vectorization**: Designed to simulate multiple independent cells or integration
@@ -21,12 +22,14 @@ Key Features:
   the macroscopic Frank-Starling mechanism.
 - **Cooperativity**: Captures the steep, non-linear force-calcium relationship typical
   of cardiac muscle dynamics.
+
 Reference:
 ----------
 Regazzoni, F., Dedè, L., & Quarteroni, A. (2018). Active contraction of cardiac cells:
 a reduced model for sarcomere dynamics with cooperative interactions.
 Biomechanics and Modeling in Mechanobiology, 17(6), 1663-1686.
 https://doi.org/10.1007/s10237-018-1049-0
+
 Example Usage:
 --------------
 >>> import numpy as np
