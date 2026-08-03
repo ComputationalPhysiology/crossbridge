@@ -93,7 +93,7 @@ class RDQ20MF(CardiacActivationModel):
         """
         super().__init__(int(num_cells), Ta_max, params)
 
-        self.p = self.default_parameters()
+        self.p = type(self).default_parameters()
         if params:
             self.p.update(params)
 
