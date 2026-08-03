@@ -39,21 +39,18 @@ def dt(model):
 def test_initialization_shapes(model):
     """x_RU and x_XB must have the correct shapes after init."""
     # x_RU: (2, 2, 2, 2, num_cells)
-    assert model.x_RU.shape == (2, 2, 2, 2, 5), (
-        f"x_RU shape mismatch: {model.x_RU.shape}"
-    )
+    assert model.x_RU.shape == (2, 2, 2, 2, 5), f"x_RU shape mismatch: {model.x_RU.shape}"
     # x_XB: (2, 2, num_cells)
-    assert model.x_XB.shape == (2, 2, 5), (
-        f"x_XB shape mismatch: {model.x_XB.shape}"
-    )
+    assert model.x_XB.shape == (2, 2, 5), f"x_XB shape mismatch: {model.x_XB.shape}"
 
 
 def test_initial_probability_sum(model):
     """RU probabilities must sum to 1 at initialization."""
     # Sum over all RU state axes (0..3), leaving the cell axis
     totals = model.x_RU.sum(axis=(0, 1, 2, 3))  # shape (5,)
-    np.testing.assert_allclose(totals, 1.0, atol=1e-12,
-                                err_msg="Initial x_RU probabilities must sum to 1")
+    np.testing.assert_allclose(
+        totals, 1.0, atol=1e-12, err_msg="Initial x_RU probabilities must sum to 1"
+    )
 
 
 def test_initial_state_is_non_permissive(model):
@@ -71,10 +68,23 @@ def test_default_parameters_keys():
     """default_parameters() must contain all required keys."""
     p = RDQ20MF.default_parameters()
     required = [
-        "dt_RU", "LA", "LM", "LB", "SL0",
-        "mu", "gamma", "Q",
-        "Kd0", "alphaKd", "Koff", "Kbasic",
-        "r0", "alpha", "mu0_fP", "mu1_fP", "a_XB",
+        "dt_RU",
+        "LA",
+        "LM",
+        "LB",
+        "SL0",
+        "mu",
+        "gamma",
+        "Q",
+        "Kd0",
+        "alphaKd",
+        "Koff",
+        "Kbasic",
+        "r0",
+        "alpha",
+        "mu0_fP",
+        "mu1_fP",
+        "a_XB",
     ]
     for key in required:
         assert key in p, f"Missing parameter key: {key}"
@@ -98,8 +108,7 @@ def test_probability_conservation_after_stepping(model, dt):
 
     totals = model.x_RU.sum(axis=(0, 1, 2, 3))
     np.testing.assert_allclose(
-        totals, 1.0, atol=1e-5,
-        err_msg="x_RU probability conservation violated after 200 steps"
+        totals, 1.0, atol=1e-5, err_msg="x_RU probability conservation violated after 200 steps"
     )
 
 
@@ -111,9 +120,7 @@ def test_xru_values_non_negative(model, dt):
     for _ in range(500):
         model.advance_step(dt, Ca, SL)
 
-    assert model.x_RU.min() >= -1e-9, (
-        f"x_RU has negative values: min = {model.x_RU.min()}"
-    )
+    assert model.x_RU.min() >= -1e-9, f"x_RU has negative values: min = {model.x_RU.min()}"
 
 
 def test_xrU_values_bounded_above(model, dt):
@@ -124,9 +131,7 @@ def test_xrU_values_bounded_above(model, dt):
     for _ in range(500):
         model.advance_step(dt, Ca, SL)
 
-    assert model.x_RU.max() <= 1.0 + 1e-9, (
-        f"x_RU has values > 1: max = {model.x_RU.max()}"
-    )
+    assert model.x_RU.max() <= 1.0 + 1e-9, f"x_RU has values > 1: max = {model.x_RU.max()}"
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +148,8 @@ def test_calcium_sensitivity(dt):
     model_low = RDQ20MF(num_cells=1)
 
     SL = np.array([2.2])
-    Ca_high = np.array([2.0])   # saturating Ca
-    Ca_low = np.array([0.1])    # diastolic Ca
+    Ca_high = np.array([2.0])  # saturating Ca
+    Ca_low = np.array([0.1])  # diastolic Ca
 
     for _ in range(1000):
         model_high.advance_step(dt, Ca_high, SL)
@@ -153,9 +158,7 @@ def test_calcium_sensitivity(dt):
     P_high = model_high.compute_permissivity()[0]
     P_low = model_low.compute_permissivity()[0]
 
-    assert P_high > P_low, (
-        f"Ca sensitivity failed: P_high={P_high:.4f}, P_low={P_low:.4f}"
-    )
+    assert P_high > P_low, f"Ca sensitivity failed: P_high={P_high:.4f}, P_low={P_low:.4f}"
 
 
 def test_active_tension_calcium_sensitivity(dt):
@@ -204,9 +207,7 @@ def test_length_dependence(dt):
     P_opt = model_opt.compute_permissivity()[0]
     P_short = model_short.compute_permissivity()[0]
 
-    assert P_opt > P_short, (
-        f"Length dependence failed: P_opt={P_opt:.4f}, P_short={P_short:.4f}"
-    )
+    assert P_opt > P_short, f"Length dependence failed: P_opt={P_opt:.4f}, P_short={P_short:.4f}"
 
 
 def test_zero_calcium_stays_inactive(dt):
@@ -282,15 +283,17 @@ def test_single_vs_batch_consistency(dt):
     n_steps = 500
     for _ in range(n_steps):
         for i, m in enumerate(singles):
-            m.advance_step(dt, Ca_vals[i:i+1], SL_vals[i:i+1], dSL_vals[i:i+1])
+            m.advance_step(dt, Ca_vals[i : i + 1], SL_vals[i : i + 1], dSL_vals[i : i + 1])
         batch.advance_step(dt, Ca_vals, SL_vals, dSL_vals)
 
     P_batch = batch.compute_permissivity()
     for i, m in enumerate(singles):
         P_single = m.compute_permissivity()[0]
         np.testing.assert_allclose(
-            P_batch[i], P_single, rtol=1e-10,
-            err_msg=f"Cell {i}: batch P={P_batch[i]:.6f} != single P={P_single:.6f}"
+            P_batch[i],
+            P_single,
+            rtol=1e-10,
+            err_msg=f"Cell {i}: batch P={P_batch[i]:.6f} != single P={P_single:.6f}",
         )
 
 
@@ -306,8 +309,9 @@ def test_frac_SO_at_reference_length():
     # At exactly the plateau (2*LA), frac_SO should be 1
     SL_plateau = np.array([2 * p["LA"]])
     frac = model._frac_SO(SL_plateau)
-    np.testing.assert_allclose(frac, 1.0, atol=1e-10,
-                                err_msg=f"frac_SO should be 1 at SL=2*LA, got {frac}")
+    np.testing.assert_allclose(
+        frac, 1.0, atol=1e-10, err_msg=f"frac_SO should be 1 at SL=2*LA, got {frac}"
+    )
 
 
 def test_frac_SO_zero_below_actin():
@@ -316,8 +320,9 @@ def test_frac_SO_zero_below_actin():
     p = model.p
     SL_below = np.array([p["LA"] * 0.9])
     frac = model._frac_SO(SL_below)
-    np.testing.assert_allclose(frac, 0.0, atol=1e-10,
-                                err_msg=f"frac_SO should be 0 below LA, got {frac}")
+    np.testing.assert_allclose(
+        frac, 0.0, atol=1e-10, err_msg=f"frac_SO should be 0 below LA, got {frac}"
+    )
 
 
 def test_frac_SO_range():
@@ -346,9 +351,7 @@ def test_xb_advances_after_freqXB_steps(dt):
         model.advance_step(dt, Ca, SL, dSL)
 
     # XB should have populated
-    assert model.x_XB.sum() > 1e-8, (
-        f"x_XB still zero after {model.freqXB * 3} steps: {model.x_XB}"
-    )
+    assert model.x_XB.sum() > 1e-8, f"x_XB still zero after {model.freqXB * 3} steps: {model.x_XB}"
 
 
 def test_xb_velocity_dependence(dt):
@@ -374,8 +377,7 @@ def test_xb_velocity_dependence(dt):
 
     # Shortening velocity increases detachment rate, so Ta should be lower
     assert Ta_static >= Ta_shortening, (
-        f"Velocity dependence failed: Ta_static={Ta_static:.2f}, "
-        f"Ta_shortening={Ta_shortening:.2f}"
+        f"Velocity dependence failed: Ta_static={Ta_static:.2f}, Ta_shortening={Ta_shortening:.2f}"
     )
 
 
@@ -404,12 +406,13 @@ def test_reset(dt):
 
     # State should be back to initial
     np.testing.assert_allclose(
-        model.x_RU[0, 0, 0, 0, :], 1.0, atol=1e-12,
-        err_msg="After reset, x_RU[0,0,0,0,:] should be 1"
+        model.x_RU[0, 0, 0, 0, :],
+        1.0,
+        atol=1e-12,
+        err_msg="After reset, x_RU[0,0,0,0,:] should be 1",
     )
     np.testing.assert_allclose(
-        model.x_XB, 0.0, atol=1e-12,
-        err_msg="After reset, x_XB should be zero"
+        model.x_XB, 0.0, atol=1e-12, err_msg="After reset, x_XB should be zero"
     )
     assert model._step_count == 0
 

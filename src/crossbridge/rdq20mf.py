@@ -134,8 +134,8 @@ class RDQ20MF(CardiacActivationModel):
         # Dynamic (binding) entries — rate of leaving Ca-unbound state (C=0):
         #   kC[0, 0, :] = kC[0, 1, :] = Kon * Ca  (updated in _update_Ca_rates)
         self.kC = np.zeros((2, 2, self.num_cells))
-        self.kC[1, 0, :] = self.p["Koff"]                  # unbinding, T non-permissive
-        self.kC[1, 1, :] = self.p["Koff"] / self.p["mu"]   # unbinding, T permissive
+        self.kC[1, 0, :] = self.p["Koff"]  # unbinding, T non-permissive
+        self.kC[1, 1, :] = self.p["Koff"] / self.p["mu"]  # unbinding, T permissive
 
         # kT_base: time-invariant part of kT, shape (2, 2, 2, 2)
         # This is set in _init_rate_matrices and shared across cells.
@@ -165,8 +165,8 @@ class RDQ20MF(CardiacActivationModel):
         # Non-permissive → permissive (b=0 → 1):
         # Rate = Q * Kbasic * (1/mu if Ca unbound, 1 if Ca bound) * gamma^n_perm_neighbors
         # Q can be SL-dependent (here stored as static; vectorized update in _update_kT_NP)
-        self.kT_base[:, 0, :, 0] = Q * Kbasic / mu * gamma ** expMat
-        self.kT_base[:, 0, :, 1] = Q * Kbasic * gamma ** expMat
+        self.kT_base[:, 0, :, 0] = Q * Kbasic / mu * gamma**expMat
+        self.kT_base[:, 0, :, 1] = Q * Kbasic * gamma**expMat
 
     @staticmethod
     def default_parameters() -> dict:
@@ -179,29 +179,29 @@ class RDQ20MF(CardiacActivationModel):
         p["dt_RU"] = 2.5e-5  # [s] RU integration timestep
 
         # Geometry
-        p["LA"] = 1.25    # [µm] actin filament half-length
-        p["LM"] = 1.65    # [µm] myosin filament half-length
-        p["LB"] = 0.18    # [µm] bare zone half-length
-        p["SL0"] = 2.2    # [µm] reference sarcomere length
+        p["LA"] = 1.25  # [µm] actin filament half-length
+        p["LM"] = 1.65  # [µm] myosin filament half-length
+        p["LB"] = 0.18  # [µm] bare zone half-length
+        p["SL0"] = 2.2  # [µm] reference sarcomere length
 
         # RU steady-state / cooperativity
-        p["mu"] = 10.0     # [-] Ca-binding cooperativity when permissive
+        p["mu"] = 10.0  # [-] Ca-binding cooperativity when permissive
         p["gamma"] = 12.0  # [-] nearest-neighbor cooperativity
-        p["Q"] = 2.0       # [-] permissive transition cooperativity factor
+        p["Q"] = 2.0  # [-] permissive transition cooperativity factor
 
         # Calcium binding (Kd-based; Kon computed dynamically as Koff/Kd)
-        p["Kd0"] = 0.381    # [µM] dissociation constant at SL0=2.15
+        p["Kd0"] = 0.381  # [µM] dissociation constant at SL0=2.15
         p["alphaKd"] = -0.571  # [µM/µm] SL-dependence of Kd
 
         # RU kinetics
-        p["Koff"] = 100.0   # [s^-1] Ca unbinding rate
+        p["Koff"] = 100.0  # [s^-1] Ca unbinding rate
         p["Kbasic"] = 13.0  # [s^-1] basic permissive ↔ non-permissive rate
 
         # XB cycling
-        p["r0"] = 134.31    # [s^-1] baseline XB detachment rate
+        p["r0"] = 134.31  # [s^-1] baseline XB detachment rate
         p["alpha"] = 25.184  # [-] velocity-dependent detachment scaling
         p["mu0_fP"] = 32.653  # [s^-1] XB attachment rate (state 0)
-        p["mu1_fP"] = 0.778   # [s^-1] XB attachment rate (state 1)
+        p["mu1_fP"] = 0.778  # [s^-1] XB attachment rate (state 1)
 
         # Upscaling
         p["a_XB"] = 22.894e3  # [kPa] active tension scaling
@@ -236,10 +236,10 @@ class RDQ20MF(CardiacActivationModel):
         LMh = (LM - LB) * 0.5  # half-length of cross-bridge bearing region
 
         frac = (
-            (SL > LA)           * (SL <= LM)             * (SL - LA)
-            + (SL > LM)           * (SL <= 2*LA - LB)      * (SL + LM - 2*LA) * 0.5
-            + (SL > 2*LA - LB)    * (SL <= 2*LA + LB)      * LMh
-            + (SL > 2*LA + LB)    * (SL <= 2*LA + LM)      * (LM + 2*LA - SL) * 0.5
+            (SL > LA) * (SL <= LM) * (SL - LA)
+            + (SL > LM) * (SL <= 2 * LA - LB) * (SL + LM - 2 * LA) * 0.5
+            + (SL > 2 * LA - LB) * (SL <= 2 * LA + LB) * LMh
+            + (SL > 2 * LA + LB) * (SL <= 2 * LA + LM) * (LM + 2 * LA - SL) * 0.5
         ) / LMh
         return frac
 
@@ -289,10 +289,11 @@ class RDQ20MF(CardiacActivationModel):
         # Reference broadcast: kT_L[:,:,None,None]*x => (b,c,1,1) × (a,b,c,B)
         #   → first two dims of kT_L align with first two dims of x, i.e. (a,b) positions.
         # We replicate by appending cell dim and using the same [:,: ,None,None,:] broadcast.
-        sum_PhiT_C_03 = PhiT_C.sum(axis=(0, 3))   # (b=2, c=2, num_cells)
-        sum_x_03      = x.sum(axis=(0, 3))          # (b=2, c=2, num_cells)
-        kT_L = np.divide(sum_PhiT_C_03, sum_x_03,
-                         out=np.zeros_like(sum_PhiT_C_03), where=sum_x_03 > 0)
+        sum_PhiT_C_03 = PhiT_C.sum(axis=(0, 3))  # (b=2, c=2, num_cells)
+        sum_x_03 = x.sum(axis=(0, 3))  # (b=2, c=2, num_cells)
+        kT_L = np.divide(
+            sum_PhiT_C_03, sum_x_03, out=np.zeros_like(sum_PhiT_C_03), where=sum_x_03 > 0
+        )
         # kT_L shape (b,c,cell); broadcast as (b,c,1,1,cell) maps to dims (a,b,c,B,cell)
         PhiT_L = np.nan_to_num(
             kT_L[:, :, np.newaxis, np.newaxis, :] * x, nan=0.0
@@ -302,10 +303,11 @@ class RDQ20MF(CardiacActivationModel):
         # kT_R = sum(PhiT_C,(2,3)) / sum(x,(2,3)), shape (a,b,cell).
         # Reference broadcast: kT_R[None,:,:,None]*x => (1,a,b,1) × (a,b,c,B)
         #   → last two non-trivial dims (a,b) align with dims 1,2 of x = (b,c) positions.
-        sum_PhiT_C_23 = PhiT_C.sum(axis=(2, 3))   # (a=2, b=2, num_cells)
-        sum_x_23      = x.sum(axis=(2, 3))          # (a=2, b=2, num_cells)
-        kT_R = np.divide(sum_PhiT_C_23, sum_x_23,
-                         out=np.zeros_like(sum_PhiT_C_23), where=sum_x_23 > 0)
+        sum_PhiT_C_23 = PhiT_C.sum(axis=(2, 3))  # (a=2, b=2, num_cells)
+        sum_x_23 = x.sum(axis=(2, 3))  # (a=2, b=2, num_cells)
+        kT_R = np.divide(
+            sum_PhiT_C_23, sum_x_23, out=np.zeros_like(sum_PhiT_C_23), where=sum_x_23 > 0
+        )
         # kT_R shape (a,b,cell); broadcast as (1,a,b,1,cell) maps to dims (a,b,c,B,cell)
         # but reference broadcasts [None,:,:,None] which places (a,b) at dims 1,2 → (b,c)
         PhiT_R = np.nan_to_num(
@@ -328,10 +330,14 @@ class RDQ20MF(CardiacActivationModel):
         #   -Phi[..., current_state, ...] + Phi[..., flipped_state, ...]
         # which equals the difference between in-flux and out-flux.
         rhs = (
-            -PhiT_L + np.flip(PhiT_L, axis=0)
-            - PhiT_C + np.flip(PhiT_C, axis=1)
-            - PhiT_R + np.flip(PhiT_R, axis=2)
-            - PhiC_C + np.flip(PhiC_C, axis=3)
+            -PhiT_L
+            + np.flip(PhiT_L, axis=0)
+            - PhiT_C
+            + np.flip(PhiT_C, axis=1)
+            - PhiT_R
+            + np.flip(PhiT_R, axis=2)
+            - PhiC_C
+            + np.flip(PhiC_C, axis=3)
         )
         return rhs
 
@@ -387,18 +393,22 @@ class RDQ20MF(CardiacActivationModel):
             diag_P = r[c] + k_PN[c]
             diag_N = r[c] + k_NP[c]
             vc = v[c]
-            A = np.array([
-                [-diag_P,  0.0,      k_NP[c],  0.0     ],
-                [-vc,      -diag_P,  0.0,      k_NP[c] ],
-                [k_PN[c],  0.0,      -diag_N,  0.0     ],
-                [0.0,      k_PN[c],  -vc,      -diag_N ],
-            ])
-            rhs_vec = np.array([
-                perm[c] * p["mu0_fP"],
-                perm[c] * p["mu1_fP"],
-                0.0,
-                0.0,
-            ])
+            A = np.array(
+                [
+                    [-diag_P, 0.0, k_NP[c], 0.0],
+                    [-vc, -diag_P, 0.0, k_NP[c]],
+                    [k_PN[c], 0.0, -diag_N, 0.0],
+                    [0.0, k_PN[c], -vc, -diag_N],
+                ]
+            )
+            rhs_vec = np.array(
+                [
+                    perm[c] * p["mu0_fP"],
+                    perm[c] * p["mu1_fP"],
+                    0.0,
+                    0.0,
+                ]
+            )
             sol = self.x_XB[:, :, c].flatten(order="F")  # (4,), Fortran order
             # Steady state: A @ sol_inf = -rhs_vec  →  sol_inf = -A^{-1} rhs_vec
             try:
