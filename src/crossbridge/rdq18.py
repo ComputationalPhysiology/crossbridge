@@ -4,7 +4,6 @@ Reduced-Order Model for Sarcomere Dynamics (RDQ18)
 This module implements the reduced-order Ordinary Differential Equation (ODE) model
 for the mechanical activation of cardiac myofilaments, as proposed by Regazzoni,
 Dedè, and Quarteroni (2018).
-
 The model derives from a spatially explicit continuous-time Markov Chain (CTMC)
 that captures nearest-neighbor cooperative interactions along the myofilaments
 (e.g., how the attachment of one crossbridge facilitates the attachment of neighbors).
@@ -53,16 +52,18 @@ Example Usage:
 
 import numpy as np
 import numpy.typing as npt
+from .base import CardiacActivationModel
 
 
-class RDQ18:
+class RDQ18(CardiacActivationModel):
     def __init__(self, num_cells: int, Ta_max: float = 100.0, params=None):
         """
         Vectorized implementation of the RDQ18 Sarcomere model.
         """
-        self.num_cells = int(num_cells)
-        self.Ta_max = Ta_max
-        self.p = type(self).default_parameters()
+        # Call the abstract base class constructor
+        super().__init__(int(num_cells), Ta_max, params)
+
+        self.p = self.default_parameters()
         if params:
             self.p.update(params)
 
@@ -75,12 +76,10 @@ class RDQ18:
         # Constant broadcasting matrices
         # Shape: (nu, 4, 1, 4, 1, num_cells) for correct broadcasting
         _base = np.array([[0, 0, 1, 1], [0, 0, 1, 1], [1, 1, 2, 2], [1, 1, 2, 2]])
-
         self.expMat = np.tile(
             _base[np.newaxis, :, np.newaxis, :, np.newaxis, np.newaxis],
             (self.nu, 1, 1, 1, 1, self.num_cells),
         )
-
         self.gammaPlusExp = self.p["gamma"] ** self.expMat
         self.gammaMinusExp = self.p["gamma"] ** (-self.expMat)
 
@@ -123,7 +122,6 @@ class RDQ18:
         p["gamma"] = 40.0
         p["aR"] = 0.1
         p["aL"] = 0.1
-
         # Calculated constants
         p["K1on"] = p["Kon"]
         p["K1off"] = p["Koff"] / p["mu"]
@@ -141,11 +139,9 @@ class RDQ18:
     def _compute_Chi(self, SL: npt.NDArray[np.float64]):
         """Vectorized computation of Chi functions."""
         xi, xAZ, xLA, xRA, _ = self.funcs
-
         # xi_val: (nu, 1). SL: (1, num_cells)
         xi_val = xi(self.j_indices)[:, np.newaxis]
         SL_row = SL[np.newaxis, :]
-
         xRA_val = xRA(SL_row)
         xAZ_val = xAZ(SL_row)
         xLA_val = xLA(SL_row)
@@ -162,14 +158,12 @@ class RDQ18:
         resLA = np.where(
             xi_val <= xLA_val, np.exp(-((xLA_val - xi_val) ** 2) / self.p["aR"] ** 2), 1.0
         )
-
         return resLA, resRA
 
     def update_probabilities(
         self, SL: npt.NDArray[np.float64], Ca_t: float | npt.NDArray[np.float64]
     ):
         """Update PC matrix based on current SL (vector) and Ca (scalar)."""
-
         Kpn0 = self.p["Kbasic"] * self.p["gamma"] ** 2
         Kpn1 = self.p["Kbasic"] * self.p["gamma"] ** 2
 
@@ -179,18 +173,15 @@ class RDQ18:
         ChiRA = ChiRA[:, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
 
         _, _, _, _, Q = self.funcs
-
         term_common = ChiRA * ChiLA * self.gammaPlusExp
 
         # Reshape Q(SL) to match PC shape (1, 1, 1, 1, 1, num_cells)
         Q_sl = Q(SL).reshape(1, 1, 1, 1, 1, self.num_cells)
-
         Knp0_val = Q_sl * self.p["Kbasic"] / self.p["mu"]
         Knp1_val = Q_sl * self.p["Kbasic"]
 
         # Reset Constant Rates
         self.PC[:] = 0.0
-
         self.PC[:, :, 1, :, 0, :] = self.p["Koff"]  # 1N -> 0N
         self.PC[:, :, 3, :, 0, :] = Kpn0 * self.gammaMinusExp[:, :, 0, :, 0, :]  # 0P -> 0N
         self.PC[:, :, 2, :, 1, :] = Kpn1 * self.gammaMinusExp[:, :, 0, :, 0, :]  # 1P -> 1N
@@ -244,12 +235,13 @@ class RDQ18:
             assert N_val == self.num_cells, (
                 f"Ca_val length {N_val} must match num_cells {self.num_cells}"
             )
-        self.update_probabilities(SL_vals, Ca_val)
 
+        self.update_probabilities(SL_vals, Ca_val)
         dt_acc = 0
 
         while dt_acc < dt_step:
             xODE2 = np.sum(self.xODE, axis=3)
+
             # Replicate xODE: (nu-2, L, C, R, T, Cell)
             xODErep = np.tile(self.xODE[:, :, :, :, np.newaxis, :], (1, 1, 1, 1, 4, 1))
 
@@ -259,10 +251,8 @@ class RDQ18:
             # --- PhiL ---
             num_L = np.sum(self.PhiC[0 : self.nu - 3], axis=1)
             den_L = xODE2[1 : self.nu - 2, :, :, np.newaxis, :]
-
             ratio_L = np.divide(num_L, den_L, out=np.zeros_like(num_L), where=den_L != 0)
             ratio_L_exp = np.tile(ratio_L[:, :, :, np.newaxis, :, :], (1, 1, 1, 4, 1, 1))
-
             self.PhiL[1 : self.nu - 2] = ratio_L_exp
 
             # Boundary L
@@ -273,10 +263,10 @@ class RDQ18:
             # --- PhiR ---
             num_R = np.sum(self.PhiC[1 : self.nu - 2], axis=3)
             den_R = xODE2[1 : self.nu - 2, :, :, np.newaxis, :]
-
             ratio_R = np.divide(num_R, den_R, out=np.zeros_like(num_R), where=den_R != 0)
             ratio_R_exp = np.tile(ratio_R[:, np.newaxis, ...], (1, 4, 1, 1, 1, 1))
             self.PhiR[0 : self.nu - 3] = ratio_R_exp
+
             # Boundary R
             bound_R = self.PC[self.nu - 1, :, :, 0, :, :]
             self.PhiR[self.nu - 3, :, :, :, :, :] = np.tile(
@@ -288,7 +278,6 @@ class RDQ18:
             termC = np.swapaxes(self.PhiC, 2, 4) - self.PhiC
             termL = np.swapaxes(self.PhiL, 1, 4) - self.PhiL
             termR = np.swapaxes(self.PhiR, 3, 4) - self.PhiR
-
             flux = np.sum(termC + termL + termR, axis=4)
 
             xODEnew = self.xODE + self.dt * flux
@@ -310,10 +299,8 @@ class RDQ18:
         """
         # Node 0 (Left Boundary) -> Sum b(2), c(3) of xODE[0]
         m0 = np.sum(np.sum(self.xODE[0], axis=1), axis=1)  # (Left, Cell)
-
         # Center Nodes -> Sum a(1), c(3)
         m_mid = np.sum(np.sum(self.xODE, axis=1), axis=2)  # (nu-2, Center, Cell)
-
         # Right Boundary -> Sum a(1), b(2) of xODE[-1]
         m_last = np.sum(np.sum(self.xODE[-1], axis=0), axis=0)  # (Right, Cell)
 
@@ -324,6 +311,24 @@ class RDQ18:
 
         # Concatenate and Mean over spatial units
         all_perms = np.vstack([p0[np.newaxis, :], p_mid, p_last[np.newaxis, :]])
-
         # Mean over spatial dimension (axis 0)
         return np.mean(all_perms, axis=0)
+
+    def advance_step(
+        self,
+        dt: float,
+        Ca_val: float | npt.NDArray[np.float64],
+        SL_vals: float | npt.NDArray[np.float64],
+        dSL_vals: float | npt.NDArray[np.float64] | None = None,
+    ) -> None:
+        """
+        Integrate the model's internal ODEs forward by a single time step.
+        (RDQ18 does not use dSL_vals).
+        """
+        self.advance_ODE(dt, Ca_val, SL_vals)
+
+    def get_active_tension(self) -> npt.NDArray[np.float64]:
+        """
+        Compute and return the macroscopic active tension (Ta) generated.
+        """
+        return self.Ta_max * self.compute_permissivity()
