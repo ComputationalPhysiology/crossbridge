@@ -12,18 +12,30 @@
 # reproduces the length-dependent activation (LDA) of active tension -- using
 # this package's `Lewalle2024` model at its default calibration.
 #
+# This model's `default_parameters()` (a, k, pCa50ref, kuw, kws, gs, gw, phi,
+# Aeff, Tref, k1, k2, koffon) are, verbatim, the parameters the paper reports
+# in its Fig. 6 caption as "recalibrated to approximate the Awinda et al.
+# control measurements" at SL = 1.9 and 2.3 um -- *not* the Tref = 109 kPa /
+# [Ca2+]50 = 1.17 uM test parameterization used for the separate
+# consistency-check in Fig. 3e (whose fitted k1/k2 pair the paper does not
+# fully report, only the ratio K_OFF). Figs. A-B below therefore compare
+# against Fig. 6a (the F-pCa curve at these two calibrated lengths), not
+# Fig. 3e.
+#
 # It does *not* reproduce Figs. 3-4's parameter-space fitting maps, which compare
 # the amended model against the *original* (non-OFF-state) Land et al. (2017)
 # model to back out equivalent ad hoc LDA parameters; that original model is not
 # implemented in this package. Instead, this notebook evaluates the amended
 # (OFF-state) model directly:
 #
-# - **Fig A** -- Steady-state force-pCa curves at two sarcomere lengths, in the
-#   style of the paper's Fig. 3e: longer SL should show both higher maximum
-#   force and higher calcium sensitivity (left-shifted pCa50).
-# - **Fig B** -- Length dependence of maximum active tension (a Frank-Starling
-#   curve), summarizing the LDA effect the paper attributes to OFF-state
-#   force feedback.
+# - **Fig A** -- Steady-state total-tension-pCa curves at SL = 1.9 and 2.3 um,
+#   the two lengths and parameterization used in the paper's Fig. 6a: longer
+#   SL should show both higher maximum force and higher calcium sensitivity
+#   (left-shifted pCa50).
+# - **Fig B** -- Length dependence of active tension across the same SL range
+#   (1.8-2.3 um) used throughout the paper's SL-dependence figures (a
+#   Frank-Starling curve), summarizing the LDA effect the paper attributes to
+#   OFF-state force feedback.
 # - **Fig C** -- Isometric twitches at different SL under a physiological
 #   calcium transient -- not a specific paper figure (the paper's own dynamic
 #   results are frequency-domain stiffness measurements, not transient-driven
@@ -96,15 +108,22 @@ def _run_twitch(sl_values, ca_fn, duration=1.0):
 # ## Fig A -- Steady-state force-pCa at two sarcomere lengths
 #
 # Longer SL should show both higher maximum force and higher calcium
-# sensitivity (a left-shifted pCa50), matching the paper's Fig. 3e.
+# sensitivity (a left-shifted pCa50), matching the paper's Fig. 6a. SL = 1.9
+# and 2.3 um are the two lengths used in that figure -- at this model's
+# *default* parameters, which are exactly its "recalibrated to Awinda et al."
+# ones (see module docstring). SL = 1.8/2.0 um (used by an earlier version of
+# this demo) don't correspond to any paper figure and, combined with a pCa
+# window (4.3-6.3) that cropped off the low-Ca plateau, made the LDA effect
+# barely visible -- not because the model lacks it, but because neither the
+# lengths nor the pCa range matched what the paper actually plots.
 
 
 # %%
 def plot_figA_force_pca(save=True):
-    print("Generating Fig A -- Steady-state force-pCa (SL = 1.8, 2.0 um)...")
+    print("Generating Fig A -- Steady-state force-pCa (SL = 1.9, 2.3 um)...")
 
-    sl_levels = np.array([1.8, 2.0])
-    pca_levels = np.linspace(4.3, 6.3, 40)
+    sl_levels = np.array([1.9, 2.3])
+    pca_levels = np.linspace(3.5, 6.5, 60)
 
     _, ttotal = _run_steady_state(sl_levels, pca_levels, duration=2.0)
 
@@ -114,7 +133,7 @@ def plot_figA_force_pca(save=True):
         ax.plot(pca_levels, ttotal[i], color=colors[i], label=f"SL = {sl:.1f} um")
 
     ax.invert_xaxis()  # pCa convention: high Ca (activation) on the left
-    ax.set_title("Fig A: Steady-state force-pCa (Lewalle2024, paradigm A)")
+    ax.set_title("Fig A: Steady-state force-pCa (Lewalle2024, paradigm A)\ncf. paper Fig. 6a")
     ax.set_xlabel("pCa")
     ax.set_ylabel(r"$T_\mathrm{total}$ [kPa]")
     ax.set_ylim(0, None)
@@ -148,7 +167,7 @@ def plot_figA_force_pca(save=True):
 def plot_figB_length_tension(save=True):
     print("Generating Fig B -- Length dependence of active tension...")
 
-    sl_fine = np.linspace(1.8, 2.15, 20)
+    sl_fine = np.linspace(1.8, 2.3, 20)
     pca_submaximal = np.array([5.3])
 
     ta, _ = _run_steady_state(sl_fine, pca_submaximal, duration=2.0)

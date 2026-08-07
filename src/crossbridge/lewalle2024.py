@@ -171,6 +171,36 @@ class Lewalle2024(CardiacActivationModel):
 
         self.reset()
 
+    def reset(self) -> None:
+        """
+        Reset model state: all populations to zero except CaTRPN, which is
+        initialized at its own steady state for the diastolic calcium level
+        `params["Ca0"]`. This avoids starting exactly at CaTRPN=0, where the
+        CaTRPN**(-nTm/2) term in dB/dt is singular.
+        """
+        p = self.p
+        n = self.num_cells
+
+        Ca0_M = max(p["Ca0"], 1e-6) * 1e-6
+        Ca50_0_M = 10.0 ** -p["pCa50ref"]  # beta1 term vanishes at Lambda=1
+        CaTRPN0 = 1.0 / (
+            1.0 + (p["k_trpn_off"] / p["k_trpn_on"]) * (Ca50_0_M / Ca0_M) ** p["ntrpn"]
+        )
+
+        self.CaTRPN = np.full(n, CaTRPN0)
+        self.B = np.zeros(n)
+        self.S = np.zeros(n)
+        self.W = np.zeros(n)
+        self.Zs = np.zeros(n)
+        self.Zw = np.zeros(n)
+        self.Cd = np.zeros(n)
+        self.BE = np.zeros(n)
+        self.UE = np.zeros(n)
+
+        self._Lambda_prev = np.ones(n)
+        self._Lambda_curr = np.ones(n)
+        self._has_prev_step = False
+
     @classmethod
     def default_parameters(cls) -> dict:
         """
@@ -502,33 +532,3 @@ class Lewalle2024(CardiacActivationModel):
         This model's analog of `compute_permissivity()` on the RDQ models.
         """
         return self.S + self.W
-
-    def reset(self) -> None:
-        """
-        Reset model state: all populations to zero except CaTRPN, which is
-        initialized at its own steady state for the diastolic calcium level
-        `params["Ca0"]`. This avoids starting exactly at CaTRPN=0, where the
-        CaTRPN**(-nTm/2) term in dB/dt is singular.
-        """
-        p = self.p
-        n = self.num_cells
-
-        Ca0_M = max(p["Ca0"], 1e-6) * 1e-6
-        Ca50_0_M = 10.0 ** -p["pCa50ref"]  # beta1 term vanishes at Lambda=1
-        CaTRPN0 = 1.0 / (
-            1.0 + (p["k_trpn_off"] / p["k_trpn_on"]) * (Ca50_0_M / Ca0_M) ** p["ntrpn"]
-        )
-
-        self.CaTRPN = np.full(n, CaTRPN0)
-        self.B = np.zeros(n)
-        self.S = np.zeros(n)
-        self.W = np.zeros(n)
-        self.Zs = np.zeros(n)
-        self.Zw = np.zeros(n)
-        self.Cd = np.zeros(n)
-        self.BE = np.zeros(n)
-        self.UE = np.zeros(n)
-
-        self._Lambda_prev = np.ones(n)
-        self._Lambda_curr = np.ones(n)
-        self._has_prev_step = False
