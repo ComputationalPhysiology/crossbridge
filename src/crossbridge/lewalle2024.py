@@ -18,37 +18,36 @@ tension, without any ad hoc SL-dependent terms.
 
 The paper tests four feedback paradigms (its Eqs. 8-11), selected here via
 `params["which_dep"]`:
-  - "totalforce"  : paradigm A, feedback on total force (active + passive).
-                    The *only* paradigm the paper finds able to reproduce
-                    the target length dependence -- this is the default.
-  - "force"       : paradigm B, feedback on active force only.
-  - "passiveforce": paradigm D, feedback on passive force only.
-  - "Lambda"      : paradigm C, feedback on sarcomere strain.
 
-Numerical scheme
------------------
-Unlike the RU/XB tensor models in this package (RDQ18, RDQ20MF), this
-model's troponin-binding term scales as CaTRPN**(-nTm/2), which diverges as
-CaTRPN -> 0, making a naive fixed-step explicit scheme unstable. Rather than
-call an adaptive black-box stiff solver per step (prohibitively slow when
-vectorized over many cells -- dense numerical Jacobians scale with
-`9 * num_cells`), each `advance_step` call is integrated using the fact that,
-once `Ca`, `SL`, `dSL` are held fixed over the sub-interval (as they are
-throughout this package), the system decomposes into pieces that are each
-either exactly linear or become linear once the (slowly varying) force
-feedback is frozen per sub-step:
+- "totalforce": paradigm A, feedback on total force (active + passive). The
+  *only* paradigm the paper finds able to reproduce the target length
+  dependence -- this is the default.
+- "force": paradigm B, feedback on active force only.
+- "passiveforce": paradigm D, feedback on passive force only.
+- "Lambda": paradigm C, feedback on sarcomere strain.
 
-  - `CaTRPN`, `Zw`, `Zs` are each *exactly* linear ODEs (given fixed Ca and
-    dLambda/dt) and are solved in closed form for the whole step.
-  - `Cd` is piecewise-linear with a fixed sign for the whole step (it
-    relaxes monotonically towards `Lambda - 1`) and is also solved exactly.
-  - `(B, S, W, Boff, Uoff)` are coupled through a *linear* system once the
-    CaTRPN-dependent coefficients and the force-feedback rates k1/k2 are
-    frozen at each sub-step's midpoint; this 5x5 system is solved exactly
-    per sub-step via a matrix exponential (`scipy.linalg.expm`), the same
-    technique RDQ20MF uses for its crossbridge sub-system. A handful of
-    sub-steps (accuracy, not stability, is the only reason for more than
-    one) keep the frozen coefficients tracking the true trajectory.
+**Numerical scheme.** Unlike the RU/XB tensor models in this package (RDQ18,
+RDQ20MF), this model's troponin-binding term scales as CaTRPN**(-nTm/2),
+which diverges as CaTRPN -> 0, making a naive fixed-step explicit scheme
+unstable. Rather than call an adaptive black-box stiff solver per step
+(prohibitively slow when vectorized over many cells -- dense numerical
+Jacobians scale with `9 * num_cells`), each `advance_step` call is
+integrated using the fact that, once `Ca`, `SL`, `dSL` are held fixed over
+the sub-interval (as they are throughout this package), the system
+decomposes into pieces that are each either exactly linear or become linear
+once the (slowly varying) force feedback is frozen per sub-step:
+
+- `CaTRPN`, `Zw`, `Zs` are each *exactly* linear ODEs (given fixed Ca and
+  dLambda/dt) and are solved in closed form for the whole step.
+- `Cd` is piecewise-linear with a fixed sign for the whole step (it relaxes
+  monotonically towards `Lambda - 1`) and is also solved exactly.
+- `(B, S, W, Boff, Uoff)` are coupled through a *linear* system once the
+  CaTRPN-dependent coefficients and the force-feedback rates k1/k2 are
+  frozen at each sub-step's midpoint; this 5x5 system is solved exactly per
+  sub-step via a matrix exponential (`scipy.linalg.expm`), the same
+  technique RDQ20MF uses for its crossbridge sub-system. A handful of
+  sub-steps (accuracy, not stability, is the only reason for more than one)
+  keep the frozen coefficients tracking the true trajectory.
 
 This makes every sub-step unconditionally stable (no eigenvalue-driven step
 size restriction). The linear solve for the 5x5 system's steady state is
@@ -61,8 +60,8 @@ different norms. Each 5x5 exponential is cheap, so this is not the model's
 performance bottleneck -- correctness took priority over avoiding this one
 small loop.
 
-Example Usage:
---------------
+Examples
+--------
 >>> import numpy as np
 >>> from crossbridge import Lewalle2024
 >>>
@@ -95,15 +94,20 @@ class Lewalle2024(CardiacActivationModel):
     """
     Vectorized Land2017 + myosin OFF-state force-feedback model.
 
-    State variables (each shape `(num_cells,)`):
-    ----------------------------------------------
-    CaTRPN : fraction of troponin C units with Ca2+ bound.
-    B, S, W : thin/thick-filament ON-state populations (blocked, strongly
-        bound "post-stroke", weakly bound "pre-stroke").
-    BE, UE : mirror populations with the myosin head in the OFF state
+    Attributes
+    ----------
+    CaTRPN : ndarray, shape (num_cells,)
+        Fraction of troponin C units with Ca2+ bound.
+    B, S, W : ndarray, shape (num_cells,)
+        Thin/thick-filament ON-state populations (blocked, strongly bound
+        "post-stroke", weakly bound "pre-stroke").
+    BE, UE : ndarray, shape (num_cells,)
+        Mirror populations with the myosin head in the OFF state
         (blocked-OFF, unblocked-OFF).
-    Zs, Zw : cross-bridge distortions associated with the S and W states.
-    Cd : dashpot strain of the passive spring-dashpot element.
+    Zs, Zw : ndarray, shape (num_cells,)
+        Cross-bridge distortions associated with the S and W states.
+    Cd : ndarray, shape (num_cells,)
+        Dashpot strain of the passive spring-dashpot element.
 
     `U = 1 - B - S - W - BE - UE` (thin-filament-unblocked, myosin-ON) is
     derived, not integrated, mirroring the conservation constraint in the
@@ -114,19 +118,6 @@ class Lewalle2024(CardiacActivationModel):
     "Lambda" ODE state, since length is imposed by the caller exactly like
     the other models in this package.
     """
-
-    CaTRPN: npt.NDArray[np.float64]
-    B: npt.NDArray[np.float64]
-    S: npt.NDArray[np.float64]
-    W: npt.NDArray[np.float64]
-    Zs: npt.NDArray[np.float64]
-    Zw: npt.NDArray[np.float64]
-    Cd: npt.NDArray[np.float64]
-    BE: npt.NDArray[np.float64]
-    UE: npt.NDArray[np.float64]
-    _Lambda_prev: npt.NDArray[np.float64]
-    _Lambda_curr: npt.NDArray[np.float64]
-    _has_prev_step: bool
 
     def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
         """
