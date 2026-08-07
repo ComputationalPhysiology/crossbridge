@@ -15,7 +15,7 @@ The key features of the model are:
   binding state C (0=unbound, 1=bound). The joint distribution of a triplet
   (T_{i-1}, T_i, T_{i+1}, C_i) is tracked, giving a (2,2,2,2) state tensor.
 
-- **Crossbridge cycling**: A 4-state (2×2) crossbridge model tracks the fraction
+- **Crossbridge cycling**: A 4-state (2x2) crossbridge model tracks the fraction
   of attached crossbridges in permissive (P) and non-permissive (N) states, with
   velocity-dependent detachment. The XB sub-step is solved exactly using the
   matrix exponential.
@@ -168,8 +168,8 @@ class RDQ20MF(CardiacActivationModel):
         self.kT_base[:, 0, :, 0] = Q * Kbasic / mu * gamma**expMat
         self.kT_base[:, 0, :, 1] = Q * Kbasic * gamma**expMat
 
-    @staticmethod
-    def default_parameters() -> dict:
+    @classmethod
+    def default_parameters(cls) -> dict:
         """
         Return default parameters corresponding to the human body-temperature
         parameterization from the original paper (Table 2 in [2]).
@@ -385,39 +385,51 @@ class RDQ20MF(CardiacActivationModel):
 
         # Velocity-dependent detachment rate
         r = p["r0"] + p["alpha"] * np.abs(v)  # shape (num_cells,)
+        diag_P = r + k_PN  # shape (num_cells,)
+        diag_N = r + k_NP  # shape (num_cells,)
 
-        # For each cell, build and solve the 4x4 linear ODE:
-        # d/dt [xP0, xP1, xN0, xN1]^T = A @ [xP0, xP1, xN0, xN1]^T + rhs
-        # where P=permissive, N=non-permissive, 0/1=XB sub-states
-        for c in range(self.num_cells):
-            diag_P = r[c] + k_PN[c]
-            diag_N = r[c] + k_NP[c]
-            vc = v[c]
-            A = np.array(
-                [
-                    [-diag_P, 0.0, k_NP[c], 0.0],
-                    [-vc, -diag_P, 0.0, k_NP[c]],
-                    [k_PN[c], 0.0, -diag_N, 0.0],
-                    [0.0, k_PN[c], -vc, -diag_N],
-                ]
-            )
-            rhs_vec = np.array(
-                [
-                    perm[c] * p["mu0_fP"],
-                    perm[c] * p["mu1_fP"],
-                    0.0,
-                    0.0,
-                ]
-            )
-            sol = self.x_XB[:, :, c].flatten(order="F")  # (4,), Fortran order
-            # Steady state: A @ sol_inf = -rhs_vec  →  sol_inf = -A^{-1} rhs_vec
-            try:
-                sol_inf = -np.linalg.solve(A, rhs_vec)
-            except np.linalg.LinAlgError:
-                sol_inf = np.zeros(4)
-            delta = sol - sol_inf
-            new_sol = sol_inf + expm(dt_xb * A) @ delta
-            self.x_XB[:, :, c] = new_sol.reshape((2, 2), order="F")
+        # Build and solve the 4x4 linear ODE for every cell at once (batched
+        # over the leading axis): d/dt [xP0, xN0, xP1, xN1]^T = A @ [...] + rhs
+        # where P=permissive, N=non-permissive, 0/1=XB sub-states. This mirrors
+        # the per-cell system in the reference implementation without a
+        # Python-level loop over cells (np.linalg.solve and scipy.linalg.expm
+        # both operate on stacks of (num_cells, 4, 4) matrices).
+        A = np.zeros((self.num_cells, 4, 4))
+        A[:, 0, 0] = -diag_P
+        A[:, 0, 2] = k_NP
+        A[:, 1, 0] = -v
+        A[:, 1, 1] = -diag_P
+        A[:, 1, 3] = k_NP
+        A[:, 2, 0] = k_PN
+        A[:, 2, 2] = -diag_N
+        A[:, 3, 1] = k_PN
+        A[:, 3, 2] = -v
+        A[:, 3, 3] = -diag_N
+
+        zeros = np.zeros(self.num_cells)
+        rhs_vec = np.stack(
+            [perm * p["mu0_fP"], perm * p["mu1_fP"], zeros, zeros], axis=-1
+        )  # (num_cells, 4), ordered to match the A/state layout above
+
+        # sol: (num_cells, 4), Fortran-order flatten of x_XB[:, :, c] per cell
+        sol = np.stack(
+            [self.x_XB[0, 0, :], self.x_XB[1, 0, :], self.x_XB[0, 1, :], self.x_XB[1, 1, :]],
+            axis=-1,
+        )
+
+        # Steady state: A @ sol_inf = -rhs_vec  →  sol_inf = -A^{-1} rhs_vec
+        try:
+            sol_inf = -np.linalg.solve(A, rhs_vec[:, :, np.newaxis])[:, :, 0]
+        except np.linalg.LinAlgError:
+            sol_inf = np.zeros((self.num_cells, 4))
+
+        delta = sol - sol_inf  # (num_cells, 4)
+        new_sol = sol_inf + np.einsum("nij,nj->ni", expm(dt_xb * A), delta)
+
+        self.x_XB[0, 0, :] = new_sol[:, 0]
+        self.x_XB[1, 0, :] = new_sol[:, 1]
+        self.x_XB[0, 1, :] = new_sol[:, 2]
+        self.x_XB[1, 1, :] = new_sol[:, 3]
 
     # ------------------------------------------------------------------
     # Public interface (CardiacActivationModel)

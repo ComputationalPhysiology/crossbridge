@@ -101,8 +101,8 @@ class RDQ18(CardiacActivationModel):
         self.PhiL = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
         self.PhiR = np.zeros((self.nu - 2, 4, 4, 4, 4, self.num_cells))
 
-    @staticmethod
-    def default_parameters():
+    @classmethod
+    def default_parameters(cls):
         p = {}
         # Simulation
         p["dt"] = 2.5e-5
@@ -332,3 +332,8 @@ class RDQ18(CardiacActivationModel):
         Compute and return the macroscopic active tension (Ta) generated.
         """
         return self.Ta_max * self.compute_permissivity()
+
+    def reset(self) -> None:
+        """Reset model state to initial (fully non-permissive, unbound)."""
+        self.xODE[:] = 0.0
+        self.xODE[:, 0, 0, 0, :] = 1.0
