@@ -70,3 +70,11 @@ class CardiacActivationModel(ABC):
             The active tension for each cell/integration point (shape: `num_cells`).
         """
         pass
+
+    @abstractmethod
+    def reset(self) -> None:
+        """
+        Reset the model's internal state to its initial condition (as set by
+        `__init__`), without re-allocating precomputed constants.
+        """
+        pass

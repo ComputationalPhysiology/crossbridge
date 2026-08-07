@@ -2,8 +2,14 @@
 
 **crossbridge** is a highly efficient, vectorized Python library for simulating cardiac myofilament activation and crossbridge dynamics.
 
-## The Mathematical Model
-This library implements the reduced-order Ordinary Differential Equation (ODE) model of sarcomere dynamics proposed by Regazzoni, Dedè, and Quarteroni (2018).
+## The Mathematical Models
+`crossbridge` implements several reduced-order models of cardiac myofilament activation, all
+sharing a common interface (see [Choosing a Model](#choosing-a-model) below) so that a
+coupled electromechanics simulation can swap between them with minimal code changes.
+
+### RDQ18
+A reduced-order Ordinary Differential Equation (ODE) model of sarcomere dynamics proposed by
+Regazzoni, Dedè, and Quarteroni (2018).
 
 Spatially explicit Markov Chain models of the sarcomere accurately capture length-dependent activation and nearest-neighbor cooperative interactions (such as attached crossbridges increasing the affinity of troponin C to calcium). However, these full models involve an intractable number of degrees of freedom (on the order of $10^{21}$) and require slow Monte Carlo simulations.
 
@@ -11,6 +17,25 @@ The RDQ18 model overcomes this by using a physically motivated assumption of con
 
 **Reference:**
 > Regazzoni, F., Dedè, L., & Quarteroni, A. (2018). *Active contraction of cardiac cells: a reduced model for sarcomere dynamics with cooperative interactions.* Biomechanics and Modeling in Mechanobiology, 17(6), 1663-1686.
+
+### RDQ20-MF
+A mean-field extension of RDQ18 that adds an explicit crossbridge-cycling sub-system on top of
+the same regulatory-unit kinetics, producing active tension from both the permissive-state
+fraction and the crossbridge attachment state (rather than treating permissivity as a direct
+proxy for tension).
+
+**Reference:**
+> Regazzoni, F., Dedè, L., & Quarteroni, A. (2020). *Biophysically detailed mathematical models of multiscale cardiac active mechanics.* PLOS Computational Biology, 16(12), e1008294.
+
+### Lewalle2024
+A different modeling paradigm: an amendment of the Land et al. (2017) human-ventricular
+contraction model that replaces its ad hoc length-dependent-activation terms with an explicit
+myosin "OFF" (super-relaxed) state whose OFF↔ON transition rate is modulated by sarcomere
+force — a mechanosensitive feedback loop that reproduces the Frank-Starling length dependence
+of active tension without any ad hoc SL-dependent terms.
+
+**Reference:**
+> Lewalle, A., Milburn, G., Campbell, K. S., & Niederer, S. A. (2024). *Cardiac length-dependent activation driven by force-dependent thick-filament dynamics.* Biophysical Journal, 123(18), 2996-3009.
 
 ## Installation
 
@@ -75,6 +100,45 @@ plt.show()
 ```
 ![Example Output](https://github.com/user-attachments/assets/4d07bea6-9f5d-4aae-a1df-2debe6199999)
 
+## Choosing a Model
+
+All models subclass the same `CardiacActivationModel` abstract base class and share one
+constructor and stepping interface:
+
+```python
+ModelClass(num_cells, Ta_max=..., params={...})
+model.default_parameters()      # classmethod: dict of physiological defaults
+model.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)   # integrate one time step
+model.get_active_tension()      # -> np.ndarray, shape (num_cells,), kPa
+model.reset()                   # restore the model's initial state
+```
+
+This means a coupled simulation loop written against `advance_step`/`get_active_tension` works
+unchanged if the model class is swapped out. `RDQ18.advance_ODE` (used in the example above) is
+that model's original, more detailed entry point; `advance_step` is the portable one to use when
+you want to be able to swap models.
+
+| Model         | State representation                          | `Ta_max` semantics                                             | Typical `dt`   |
+|---------------|------------------------------------------------|------------------------------------------------------------------|---------------|
+| `RDQ18`       | RU triplet joint-probability tensor            | Used directly: `Ta = Ta_max * compute_permissivity()`            | 2.5e-5 s      |
+| `RDQ20MF`     | RU triplet tensor + explicit crossbridge states| **Unused** — tension is computed from `params["a_XB"]` instead   | 2.5e-5 s      |
+| `Lewalle2024` | Land2017 state populations + OFF-state feedback| **Unused** — tension is computed from `params["Tref"]` instead   | up to ~1e-3 s (adaptive internal sub-stepping) |
+
+Only `RDQ18` scales tension via the constructor's `Ta_max` argument; `RDQ20MF` and `Lewalle2024`
+compute tension intrinsically from their own parameter set (`a_XB`, `Tref`) and accept `Ta_max`
+purely for interface compatibility. Check which case applies before relying on `Ta_max` when
+swapping models.
+
+Since all three share the same constructor signature, a model can be selected by name at
+runtime via the small registry in `crossbridge`:
+
+```python
+from crossbridge import get_model
+
+ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Lewalle2024"
+sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
+```
+
 ## Coupling to Electrophysiology and Mechanics
 Most cellular and tissue-level simulations will require coupling the `RDQ18` model to electrophysiology and mechanics. The `advance_ODE` method is designed to be called at every time step of a larger simulation loop, allowing the sarcomere dynamics to evolve in response to changing calcium and length conditions.
 
@@ -101,11 +165,12 @@ for t in time_steps:
 
 The `demo/` folder contains several scripts demonstrating how to couple the `crossbridge` model to different physics scales:
 
-### 1. Reproducing the Paper (`reproduce_figures.py`)
-Runs the standalone `RDQ18` model to recreate the original validation figures from the 2018 paper.
+### 1. Reproducing the Papers (`reproduce_figures.py`, `reproduce_figures_rdq20mf.py`)
+Run the standalone `RDQ18` and `RDQ20MF` models to recreate the original validation figures
+from their respective papers.
 * **Steady State:** Computes force-calcium relationships, length-dependent activation, and Hill curves.
 * **Dynamic Twitches:** Simulates twitches under varying calcium transients and fixed sarcomere lengths.
-* **Tension Redevelopment ($k_{tr}$):** Simulates sudden crossbridge detachment and subsequent exponential recovery.
+* **Tension Redevelopment ($k_{tr}$):** Simulates sudden crossbridge detachment and subsequent exponential recovery (`reproduce_figures.py` only).
 
 ### 2. Coupled 0D Electromechanics (`holzapfel_torord_*.py`)
 These demos couple the `RDQ18` model to a cell-level electrophysiology model (ToRORd) and a macro-scale tissue mechanics model (`zero_mech` with Holzapfel-Ogden materials).
@@ -115,7 +180,7 @@ These demos couple the `RDQ18` model to a cell-level electrophysiology model (To
 ### 3. Finite Element Coupling (`fem.py`)
 Demonstrates how to couple the point-wise `RDQ18` model to a full 3D Finite Element Method (FEM) mesh using `dolfinx` and `pulse`. It evaluates the sarcomere model over the integration points of a unit cube.
 
-### 4. Interactive Plotting (`plot.py`)
+### 4. Interactive Plotting (`interactive_plot.py`)
 An interactive `matplotlib` script that runs a single cell simulation in real-time, displaying the transient states, calcium inputs, and fraction of permissive states visually. This produce a similar plot as the one provided in the Matlab code of the original paper.
 
 ## Testing and Development
