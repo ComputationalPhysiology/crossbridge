@@ -2,6 +2,7 @@ from .base import CardiacActivationModel
 from .rdq18 import RDQ18
 from .rdq20mf import RDQ20MF
 from .lewalle2024 import Lewalle2024
+from .land17 import Land2017
 from . import utils
 from .utils import calcium_trace, sl_trace
 
@@ -14,6 +15,7 @@ MODEL_REGISTRY: dict[str, type[CardiacActivationModel]] = {
     "RDQ18": RDQ18,
     "RDQ20MF": RDQ20MF,
     "Lewalle2024": Lewalle2024,
+    "Land2017": Land2017,
 }
 
 
@@ -45,6 +47,7 @@ __all__ = [
     "RDQ18",
     "RDQ20MF",
     "Lewalle2024",
+    "Land2017",
     "MODEL_REGISTRY",
     "get_model",
     "utils",

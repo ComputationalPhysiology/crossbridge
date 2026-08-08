@@ -2,13 +2,25 @@ format: jb-book
 root: README
 
 parts:
+  - caption: Models
+    chapters:
+    - file: "docs/models/index"
+      sections:
+      - file: "docs/models/rdq18"
+      - file: "docs/models/rdq20mf"
+      - file: "docs/models/land2017"
+      - file: "docs/models/lewalle2024"
+
   - caption: Examples
     chapters:
-    - file: "demo/interactive_plot"
-    - file: "demo/holzapfel_torord_isotonic"
-    - file: "demo/holzapfel_torord_isometric"
-    - file: "demo/reproduce_figures_lewalle2024"
-    - file: "demo/compare_models"
+    - file: "demo/index"
+      sections:
+      - file: "demo/interactive_plot"
+      - file: "demo/holzapfel_torord_isotonic"
+      - file: "demo/holzapfel_torord_isometric"
+      - file: "demo/reproduce_figures_land2017"
+      - file: "demo/reproduce_figures_lewalle2024"
+      - file: "demo/compare_models"
 
   - caption: Python API
     chapters:
