@@ -5,5 +5,4 @@ the same regulatory-unit kinetics, producing active tension from both the permis
 fraction and the crossbridge attachment state (rather than treating permissivity as a direct
 proxy for tension).
 
-**Reference:**
-> Regazzoni, F., Dedè, L., & Quarteroni, A. (2020). *Biophysically detailed mathematical models of multiscale cardiac active mechanics.* PLOS Computational Biology, 16(12), e1008294.
+**Reference:** {cite}`regazzoni2020biophysically`

@@ -7,5 +7,4 @@ Spatially explicit Markov Chain models of the sarcomere accurately capture lengt
 
 The RDQ18 model overcomes this by using a physically motivated assumption of conditional independence to track joint probabilities of triplets of consecutive units. This condenses the system to roughly 2,200 variables, resulting in a system of ODEs that solves 10,000 times faster than the original Monte Carlo method while maintaining high accuracy.
 
-**Reference:**
-> Regazzoni, F., Dedè, L., & Quarteroni, A. (2018). *Active contraction of cardiac cells: a reduced model for sarcomere dynamics with cooperative interactions.* Biomechanics and Modeling in Mechanobiology, 17(6), 1663-1686.
+**Reference:** {cite}`regazzoni2018active`

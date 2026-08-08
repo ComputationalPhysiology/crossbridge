@@ -21,6 +21,12 @@ rdq20mf
 .. automodule:: crossbridge.rdq20mf
     :members:
 
+land17
+------
+
+.. automodule:: crossbridge.land17
+    :members:
+
 lewalle2024
 -----------
 

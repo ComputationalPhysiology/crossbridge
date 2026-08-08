@@ -306,13 +306,23 @@ def plot_figD_isometric_twitch(save=True):
 
 # %%
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Reproduce Lewalle2024 paper results.")
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Save figures to PNG files instead of displaying them interactively.",
+    )
+    args, _ = parser.parse_known_args()
+
     print("=" * 60)
     print("Land2017 (human cardiac contraction) Figure Reproduction")
     print("=" * 60)
 
-    plot_figA_passive_step_response(save=True)
-    plot_figB_force_pca(save=True)
-    plot_figC_quick_stretch(save=True)
-    plot_figD_isometric_twitch(save=True)
+    plot_figA_passive_step_response(save=args.save)
+    plot_figB_force_pca(save=args.save)
+    plot_figC_quick_stretch(save=args.save)
+    plot_figD_isometric_twitch(save=args.save)
 
     print("\nDone.")
