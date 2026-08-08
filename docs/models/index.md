@@ -55,3 +55,8 @@ from crossbridge import get_model
 ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024"
 sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
 ```
+
+## References
+
+```{bibliography}
+```

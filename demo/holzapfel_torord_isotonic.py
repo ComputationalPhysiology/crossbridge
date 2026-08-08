@@ -4,7 +4,7 @@
 # In this tutorial, we will construct a fully coupled, zero-dimensional (0D) cardiac electromechanical simulation. We will link three distinct models:
 #
 # 1. **Electrophysiology (EP)**: The Tomek-Rodriguez (ToRORd) model, which simulates the cardiac action potential and intracellular calcium transient.
-# [cite_start]2. **Sarcomere Mechanics**: The RDQ18 model, a highly efficient reduced-order ordinary differential equation (ODE) model for myofilament activation and crossbridge cycling[cite: 1]. [cite_start]It computes the fraction of permissive myosin heads based on nearest-neighbor cooperative interactions[cite: 1].
+# 2. **Sarcomere Mechanics**: The RDQ18 model {cite}`regazzoni2018active`, a highly efficient reduced-order ordinary differential equation (ODE) model for myofilament activation and crossbridge cycling. It computes the fraction of permissive myosin heads based on nearest-neighbor cooperative interactions.
 # 3. **Tissue Mechanics**: An incompressible Holzapfel-Ogden hyperelastic material model subjected to an active stress formulation.
 #
 # We will simulate an **unloaded free contraction**, meaning the virtual tissue block is free to shorten against zero external mechanical resistance.
@@ -182,9 +182,9 @@ def func(x, Ta):
 # %% [markdown]
 # ### Initializing the RDQ18 Sarcomere Model
 #
-# The RDQ18 model bridges the EP and tissue scales.
-# [cite_start]* **Input**: It receives intracellular calcium $c(t)$ and sarcomere length $SL(t)$[cite: 1].
-# [cite_start]* **Output**: It yields the fraction of permissive myosin heads, which determines the active force[cite: 1].
+# The RDQ18 model {cite}`regazzoni2018active` bridges the EP and tissue scales:
+# * **Input**: It receives intracellular calcium $c(t)$ and sarcomere length $SL(t)$.
+# * **Output**: It yields the fraction of permissive myosin heads, which determines the active force.
 #
 # **Critical Unit Management**:
 # * The EP model (ToRORd) computes time in **ms** and calcium in **mM**.

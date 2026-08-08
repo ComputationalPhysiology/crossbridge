@@ -54,7 +54,7 @@ from crossbridge import get_model, calcium_trace
 MODEL_KWARGS = {
     "RDQ18": {"Ta_max": 60.0},
     "RDQ20MF": {},
-    "Lewalle2024": {"Ta_max": 60.0},
+    "Lewalle2024": {},
 }
 COLORS = {"RDQ18": "tab:blue", "RDQ20MF": "tab:orange", "Lewalle2024": "tab:green"}
 
