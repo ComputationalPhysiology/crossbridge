@@ -13,12 +13,14 @@ parts:
 
   - caption: Examples
     chapters:
-    - file: "demo/interactive_plot"
-    - file: "demo/holzapfel_torord_isotonic"
-    - file: "demo/holzapfel_torord_isometric"
-    - file: "demo/reproduce_figures_land2017"
-    - file: "demo/reproduce_figures_lewalle2024"
-    - file: "demo/compare_models"
+    - file: "demo/index"
+      sections:
+      - file: "demo/interactive_plot"
+      - file: "demo/holzapfel_torord_isotonic"
+      - file: "demo/holzapfel_torord_isometric"
+      - file: "demo/reproduce_figures_land2017"
+      - file: "demo/reproduce_figures_lewalle2024"
+      - file: "demo/compare_models"
 
   - caption: Python API
     chapters:

@@ -72,45 +72,6 @@ plt.show()
 ```
 ![Example Output](https://github.com/user-attachments/assets/4d07bea6-9f5d-4aae-a1df-2debe6199999)
 
-## Choosing a Model
-
-All models subclass the same `CardiacActivationModel` abstract base class and share one
-constructor and stepping interface:
-
-```python
-ModelClass(num_cells, Ta_max=..., params={...})
-model.default_parameters()      # classmethod: dict of physiological defaults
-model.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)   # integrate one time step
-model.get_active_tension()      # -> np.ndarray, shape (num_cells,), kPa
-model.reset()                   # restore the model's initial state
-```
-
-This means a coupled simulation loop written against `advance_step`/`get_active_tension` works
-unchanged if the model class is swapped out. `RDQ18.advance_ODE` (used in the example above) is
-that model's original, more detailed entry point; `advance_step` is the portable one to use when
-you want to be able to swap models.
-
-| Model         | State representation                          | `Ta_max` semantics                                             | Typical `dt`   |
-|---------------|------------------------------------------------|------------------------------------------------------------------|---------------|
-| `RDQ18`       | RU triplet joint-probability tensor            | Used directly: `Ta = Ta_max * compute_permissivity()`            | 2.5e-5 s      |
-| `RDQ20MF`     | RU triplet tensor + explicit crossbridge states| **Unused** — tension is computed from `params["a_XB"]` instead   | 2.5e-5 s      |
-| `Land2017`    | Troponin/crossbridge state populations         | **Unused** — tension is computed from `params["Tref"]` instead   | up to ~1e-3 s (adaptive internal sub-stepping) |
-| `Lewalle2024` | Land2017 state populations + OFF-state feedback| **Unused** — tension is computed from `params["Tref"]` instead   | up to ~1e-3 s (adaptive internal sub-stepping) |
-
-Only `RDQ18` scales tension via the constructor's `Ta_max` argument; `RDQ20MF`, `Land2017`, and
-`Lewalle2024` compute tension intrinsically from their own parameter set (`a_XB`, `Tref`) and
-accept `Ta_max` purely for interface compatibility. Check which case applies before relying on
-`Ta_max` when swapping models.
-
-Since all models share the same constructor signature, a model can be selected by name at
-runtime via the small registry in `crossbridge`:
-
-```python
-from crossbridge import get_model
-
-ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024"
-sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
-```
 
 ## Coupling to Electrophysiology and Mechanics
 Most cellular and tissue-level simulations will require coupling the `RDQ18` model to electrophysiology and mechanics. The `advance_ODE` method is designed to be called at every time step of a larger simulation loop, allowing the sarcomere dynamics to evolve in response to changing calcium and length conditions.
@@ -134,35 +95,11 @@ for t in time_steps:
     SL = compute_new_length(active_tension, SL)
 ...
 ```
+
 ## Examples & Demos
 
-The `demo/` folder contains several scripts demonstrating how to couple the `crossbridge` model to different physics scales:
+The `demo/` folder contains several scripts demonstrating how to couple the `crossbridge` model to different physics scales. See [demos](demo/index.md) for a description of each demo and how to run them.
 
-### 1. Reproducing the Papers (`reproduce_figures.py`, `reproduce_figures_rdq20mf.py`, `reproduce_figures_land2017.py`, `reproduce_figures_lewalle2024.py`)
-Run each standalone model to recreate the original validation figures/results from its paper.
-* **RDQ18 / RDQ20MF — Steady State:** Computes force-calcium relationships, length-dependent activation, and Hill curves.
-* **RDQ18 / RDQ20MF — Dynamic Twitches:** Simulates twitches under varying calcium transients and fixed sarcomere lengths.
-* **RDQ18 — Tension Redevelopment ($k_{tr}$):** Simulates sudden crossbridge detachment and subsequent exponential recovery.
-* **Land2017:** Passive viscoelastic step response, the steady-state force-calcium relationship at three sarcomere lengths (its ad hoc `beta0`/`beta1` length-dependent activation), the biphasic quick-stretch response driven by the distortion-decay crossbridge model, and isometric twitches at different SL using the paper's "whole organ model" recalibration (see the script's docstring for what is/isn't a literal figure reproduction, since the paper's own whole-organ finite-element figure is out of scope for this package).
-* **Lewalle2024:** Steady-state force-pCa curves at two sarcomere lengths, the length dependence of active tension (Frank-Starling), and isometric twitches at different SL — showing that myosin OFF-state feedback on total force alone reproduces length-dependent activation (see the script's docstring for what is/isn't a literal figure reproduction, since some of the paper's figures compare against an unimplemented baseline model).
-
-### 2. Model Comparison (`compare_models.py`)
-Drives all three models (`RDQ18`, `RDQ20MF`, `Lewalle2024`) through the same calcium transient
-and sarcomere-length protocol via the `get_model()` registry, to demonstrate that a coupling loop
-written against the shared `advance_step`/`get_active_tension` interface works unchanged when the
-model class is swapped. Compares twitch kinetics (raw and peak-normalized) and length-dependent
-activation (normalized to a common reference SL) across the three models.
-
-### 3. Coupled 0D Electromechanics (`holzapfel_torord_*.py`)
-These demos couple the `RDQ18` model to a cell-level electrophysiology model (ToRORd) and a macro-scale tissue mechanics model (`zero_mech` with Holzapfel-Ogden materials).
-* **`holzapfel_torord_isometric.py`**: Simulates an isometric contraction where the macroscopic tissue length is clamped ($\lambda=1.0$) and the resulting internal fiber stress is measured over time.
-* **`holzapfel_torord_isotonic.py`**: Simulates a fully unloaded free contraction where the active tension forces the tissue to shorten ($\lambda < 1.0$) against zero external stress.
-
-### 4. Finite Element Coupling (`fem.py`)
-Demonstrates how to couple the point-wise `RDQ18` model to a full 3D Finite Element Method (FEM) mesh using `dolfinx` and `pulse`. It evaluates the sarcomere model over the integration points of a unit cube.
-
-### 5. Interactive Plotting (`interactive_plot.py`)
-An interactive `matplotlib` script that runs a single cell simulation in real-time, displaying the transient states, calcium inputs, and fraction of permissive states visually. This produce a similar plot as the one provided in the Matlab code of the original paper.
 
 ## Testing and Development
 We use `pytest` for unit testing. To run the test suite and check code coverage:

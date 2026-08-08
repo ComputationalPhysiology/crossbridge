@@ -10,7 +10,7 @@ on:
 jobs:
 
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     env:
       PUBLISH_DIR: ./_build/html
       CI: 1
@@ -27,7 +27,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python3 -m pip install git+https://github.com/hgrecco/pint.git
           python3 -m pip install ".[docs]"
 
       - name: Build docs
