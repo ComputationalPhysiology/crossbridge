@@ -13,19 +13,17 @@ changes. See [docs/models](docs/models/index.md) for a description and reference
 
 The package requires Python 3.11+. You can install the base package and its dependencies using `pip`.
 
-To install the library from the source code:
+To install the library you can use pip:
 ```bash
-git clone https://github.com/ComputationalPhysiology/crossbridge.git
-cd crossbridge
-pip install .
+python3 -m pip install crossbridge
 ```
 
 To install with optional dependencies (for running demos, tests, or building docs):
 ```bash
-pip install ".[demos]"  # Installs scipy, matplotlib, gotranx, numba, zero-mech, etc.
-pip install ".[test]"   # Installs pytest and coverage tools
-pip install ".[docs]"   # Installs jupyter-book and sphinx plugins
-pip install ".[all]"    # Installs everything
+python3 -m pip install "crossbridge[demos]"  # Installs scipy, matplotlib, gotranx, numba, zero-mech, etc.
+python3 -m pip install "crossbridge[test]"   # Installs pytest and coverage tools
+python3 -m pip install "crossbridge[docs]"   # Installs jupyter-book and sphinx plugins
+python3 -m pip install "crossbridge[all]"    # Installs everything
 ```
 
 ## Basic Usage
