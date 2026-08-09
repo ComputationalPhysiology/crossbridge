@@ -1,17 +1,16 @@
 # crossbridge
 
-**crossbridge** is a highly efficient, vectorized Python library for simulating cardiac myofilament activation and crossbridge dynamics.
+**crossbridge** is a Python library for simulating cardiac myofilament activation and crossbridge dynamics.
 
 ## The Mathematical Models
 `crossbridge` implements several reduced-order models of cardiac myofilament activation
 ([RDQ18](docs/models/rdq18.md), [RDQ20-MF](docs/models/rdq20mf.md), [Land2017](docs/models/land2017.md),
-[Lewalle2024](docs/models/lewalle2024.md)), all sharing a common interface (see "Choosing a Model"
-below) so that a coupled electromechanics simulation can swap between them with minimal code
+[Lewalle2024](docs/models/lewalle2024.md)), all sharing a common interface so that a coupled electromechanics simulation can swap between them with minimal code
 changes. See [docs/models](docs/models/index.md) for a description and reference for each model.
 
 ## Installation
 
-The package requires Python 3.11+. You can install the base package and its dependencies using `pip`.
+You can install the base package and its dependencies using `pip`.
 
 To install the library you can use pip:
 ```bash
@@ -26,6 +25,9 @@ python3 -m pip install "crossbridge[docs]"   # Installs jupyter-book and sphinx 
 python3 -m pip install "crossbridge[all]"    # Installs everything
 ```
 
+## Documentation
+Documentation is available at [https://computationalphysiology.github.io/crossbridge](https://computationalphysiology.github.io/crossbridge). It includes a user guide, API reference, and model background/references.
+
 ## Basic Usage
 To most basic usage its to solve for a single cell. The `RDQ18` class provides an `advance_ODE` method that takes in the time step, calcium concentration, and sarcomere length to update the internal state of the model. This can then be used to compute an active tension based on the fraction of permissive crossbridges.
 
@@ -33,7 +35,7 @@ To most basic usage its to solve for a single cell. The `RDQ18` class provides a
 import numpy as np
 from crossbridge import RDQ18, calcium_trace, sl_trace
 
-# Initialize a model with 1000 cells/integration points
+# Initialize a model with 1 cell
 num_cells = 1
 dt = 0.01
 dt_sarc = 2.5e-5
@@ -41,19 +43,14 @@ sarcomere = RDQ18(num_cells=num_cells, Ta_max=60.0, params={"dt": dt_sarc})
 
 # Inputs
 t = np.arange(0, 1, dt)  # Time array [s]
-Ca = calcium_trace(t)  # Calcium transient [uM]
-SL = sl_trace(t)  # Sarcomere length transient [um]
+Ca = calcium_trace(t)
+SL = sl_trace(t)
 
-
-Ta = np.zeros(len(t))
+Ta = np.zeros((len(t), num_cells))  # Active tension array [kPa]
 # Advance the ODEs by one time step
 for i, (Cai, SLi) in enumerate(zip(Ca, SL)):
-    sarcomere.advance_ODE(dt, Cai, np.array([SLi]))
-
-    # Compute the fraction of permissive crossbridges (proxy for active tension)
-    permissivity = sarcomere.compute_permissivity()[0]
-    active_tension = sarcomere.Ta_max * permissivity
-    Ta[i] = active_tension
+    sarcomere.advance_ODE(dt, Cai, SLi)  # Advance the model by one time step)
+    Ta[i, :] = sarcomere.get_active_tension()  # Get the active tension for each cell
 
 import matplotlib.pyplot as plt
 
@@ -85,8 +82,7 @@ for t in time_steps:
     Cai = compute_calcium(t)
     sarcomere.advance_ODE(dt, Cai, SL)
     # Compute active tension and update mechanics
-    permissivity = sarcomere.compute_permissivity()[0]
-    active_tension = sarcomere.Ta_max * permissivity
+    active_tension = sarcomere.get_active_tension()
     # Update mechanics model with new active tension
     # and compute new sarcomere length (SL) based on
     # the mechanical response of the tissue

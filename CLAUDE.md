@@ -4,96 +4,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`crossbridge` is a vectorized Python library implementing several reduced-order models of
-cardiac myofilament activation and crossbridge dynamics (RDQ18, RDQ20-MF, Lewalle2024), all
-sharing a common interface so a coupled electromechanics simulation can swap between them.
-See README.md for the physiological/mathematical background and references for each model.
+- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024), all sharing one interface so they're swappable.
+- Published on PyPI as `crossbridge`.
+- Model background/references live in `docs/models/`, not README.md (kept short by design).
 
 ## Commands
 
-Install (editable, with test deps):
-```bash
-pip install -e ".[test]"
-```
-
-Run the full test suite (coverage is configured via `addopts` in `pyproject.toml`, so plain
-`pytest` already produces coverage reports):
-```bash
-pytest
-```
-
-Run a single test file / test:
-```bash
-pytest tests/test_rdq18.py
-pytest tests/test_rdq18.py::test_probability_conservation
-```
-
-Lint / format / type-check (same tools run in CI's `pre-commit.yml`):
-```bash
-pre-commit run --all-files
-# or individually:
-ruff check .
-ruff format .
-mypy --config-file pyproject.toml
-```
-
-Demos (require `pip install ".[demos]"`) live in `demo/` and are run directly, e.g.
-`python demo/compare_models.py`, `python demo/reproduce_figures.py`. `demo/fem.py` additionally
-needs `dolfinx` and `pulse` (3D FEM coupling) and is not part of the standard install extras.
+- Install (editable, dev): `pip install -e ".[test]"`
+- Run all tests: `pytest`
+- Run one test: `pytest tests/test_rdq18.py::test_probability_conservation`
+- Lint/format/typecheck (matches CI's `pre-commit.yml`): `pre-commit run --all-files` (or individually `ruff check .`, `ruff format .`, `mypy --config-file pyproject.toml`)
+- Demos need `pip install ".[demos]"`; run directly, e.g. `python demo/compare_models.py`. `demo/fem.py` additionally needs `dolfinx`/`pulse`, not covered by any extra.
 
 ## Architecture
 
-All models live in `src/crossbridge/` and subclass the abstract `CardiacActivationModel`
-(`src/crossbridge/base.py`), which fixes one constructor signature and stepping interface:
+- All models subclass `CardiacActivationModel` (`src/crossbridge/base.py`):
+  `ModelClass(num_cells, Ta_max, params=None)`, `.default_parameters()`,
+  `.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)`, `.get_active_tension()`, `.reset()`.
+- **Adding a new model** — do all of: implement the class in `src/crossbridge/<name>.py`; register
+  it in `MODEL_REGISTRY` and `__all__` in `src/crossbridge/__init__.py`; add `docs/models/<name>.md`
+  and list it in `_toc.yml`; add an `automodule` block to `docs/api.rst`.
+- Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained and
+  fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
+  `advance_step` is the portable cross-model entry point; some models also keep an original,
+  more detailed entry point (e.g. `RDQ18.advance_ODE`).
+- `Ta_max` semantics differ by model: `RDQ18` uses it directly
+  (`Ta_max * compute_permissivity()`); `RDQ20MF`, `Land2017`, `Lewalle2024` compute tension
+  intrinsically from their own params (`a_XB`/`Tref`) and only accept `Ta_max` for interface
+  compatibility — check which applies before relying on it.
+- `Land2017` is the un-amended base model; `Lewalle2024` extends it by replacing its ad hoc
+  `beta0`/`beta1` length-dependent activation with explicit myosin OFF-state feedback.
+- `src/crossbridge/utils.py`: synthetic `calcium_trace()`/`sl_trace()` generators for tests/demos,
+  not physiological data.
+- `new_models/` (paper PDFs + reference ports) and root `main.py` are reference/scratch material,
+  not part of the installable package (`tool.setuptools.packages.find` only picks up `src/`) —
+  treat `new_models/` as read-only ground truth when checking a port's numerics.
 
-```python
-ModelClass(num_cells, Ta_max, params=None)
-model.default_parameters()   # classmethod: dict of physiological defaults
-model.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)   # integrate one time step
-model.get_active_tension()   # -> np.ndarray, shape (num_cells,), kPa
-model.reset()                # restore initial state without re-allocating precomputed constants
-```
+## Documentation
 
-A model is looked up by name via the small registry in `src/crossbridge/__init__.py`
-(`MODEL_REGISTRY` / `get_model(name)`) — add new models to both the registry and
-`__all__` when introducing one.
+- Per-model background+references: `docs/models/*.md` (+ `index.md` overview). Per-demo
+  descriptions: `demo/index.md`.
+- Citations: add entries to `docs/refs.bib`, reference via `` {cite}`key` `` (MyST role; works
+  both in `.md` files and inside jupytext-formatted demo `.py` files). Bibliography renders via a
+  bare `` ```{bibliography}``` `` directive in `docs/models/index.md`.
+- Docs are a jupyter-book site (`_config.yml`, `_toc.yml`) — new doc pages must be added to
+  `_toc.yml` or they won't appear in the built site.
 
-Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained: parameters are
-merged from `default_parameters()` with a caller-supplied `params` dict in `__init__`, and all
-state is stored as NumPy arrays with a trailing (or matching) `num_cells` dimension so a single
-model instance vectorizes across many cells/integration points at once — there is no
-per-cell Python loop in the hot path. `advance_step` is the portable, model-agnostic entry
-point; model-specific historical entry points also exist (e.g. `RDQ18.advance_ODE`) and are
-kept for backward compatibility / direct use — prefer `advance_step` in code meant to be
-model-agnostic.
+## Demos
 
-Only `RDQ18` scales tension via the constructor's `Ta_max` (`Ta_max * compute_permissivity()`).
-`RDQ20MF`, `Land2017`, and `Lewalle2024` compute tension intrinsically from their own parameters
-(`a_XB`, `Tref`, `Tref` respectively) and accept `Ta_max` purely for interface compatibility —
-check which case applies before relying on `Ta_max` when adding code that swaps models. `Land2017`
-is the un-amended base model that `Lewalle2024` extends (same troponin/crossbridge state
-machinery, but `Lewalle2024` replaces `Land2017`'s ad hoc `beta0`/`beta1` length-dependent
-activation with explicit myosin OFF-state feedback). See the "Choosing a
-Model" table in README.md for the full parameter/state comparison.
-
-`src/crossbridge/utils.py` provides synthetic `calcium_trace()` / `sl_trace()` generators used
-throughout the tests and demos as standard inputs, not physiological measurements.
-
-### Reference materials (not part of the package)
-
-`new_models/` contains the original paper PDFs and reference implementations (Python/C++/MATLAB)
-that the models in `src/crossbridge/` were ported/adapted from. `main.py` at the repo root is a
-scratch/example script. Neither is part of the installable `crossbridge` package
-(`tool.setuptools.packages.find` only picks up `src/`) — treat `new_models/` as read-only
-ground truth when checking a port's numerical behavior against the original.
-
-### Demos beyond single-cell usage
-
-Several demos in `demo/` couple a model into larger simulations and are useful references for
-architecture beyond the core library:
-- `holzapfel_torord_isometric.py` / `holzapfel_torord_isotonic.py`: couple `RDQ18` to a
-  ToRORd electrophysiology model and a `zero_mech` (Holzapfel-Ogden) tissue mechanics model.
-- `fem.py`: couples `RDQ18` to a 3D FEM mesh via `dolfinx`/`pulse`, evaluated at integration
-  points.
-- `compare_models.py`: drives all three models through an identical Ca/SL protocol via
-  `get_model()` to verify the shared-interface contract.
+- `holzapfel_torord_isometric.py` / `_isotonic.py`: couple `RDQ18` to a ToRORd EP model and
+  `zero_mech` (Holzapfel-Ogden tissue mechanics). Running them generates
+  `demo/ToRORd_dynCl_endo.{cellml,ode,py}` (downloaded/code-generated via `gotranx`, not
+  hand-written) plus PNG outputs.
+- `fem.py`: couples `RDQ18` to a 3D FEM mesh via `dolfinx`/`pulse`.
+- `compare_models.py`: drives all models through an identical Ca/SL protocol via `get_model()`
+  to verify the shared interface.
