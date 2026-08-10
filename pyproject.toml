@@ -25,10 +25,17 @@ docs = [
     "crossbridge[demos]",
     "sphinxcontrib-bibtex",
 ]
+dev = [
+    "pdbpp",
+    "ipython",
+    "bump-my-version",
+    "pre-commit",
+]
 all = [
     "crossbridge[test]",
     "crossbridge[demos]",
     "crossbridge[docs]",
+    "crossbridge[dev]",
 ]
 
 [tool.setuptools.packages.find]
