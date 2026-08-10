@@ -97,6 +97,44 @@ Two things to check when consuming `Ka`:
   needs no stabilization — but also that it exhibits no force-velocity (Hill) behaviour, which is
   a modelling limitation worth knowing before choosing it.
 
+## Calcium buffering
+
+Every model also reports how much cytosolic calcium it is currently holding, and how fast that
+is changing:
+
+```python
+theta = sarcomere.bound_calcium_fraction()    # occupied fraction, [0, 1]
+rate  = sarcomere.get_calcium_binding_rate()  # occupied fraction per second
+```
+
+This matters as soon as a model is coupled to an electrophysiology model, and it is easy to get
+wrong in a way that produces no error at all.
+
+These models bind calcium — that is what troponin does. So does the cell model on the other side.
+Run both unchanged and calcium is buffered **twice**. The usual fix is to remove troponin from the
+EP model and let the contraction model own it, which is exactly what the "Ca<sub>i</sub> split"
+does. But then the EP model's calcium balance is missing the buffering term, and it must be
+supplied from here. In ToR-ORd that term appears as
+
+$$
+J_{TRPN} = \frac{d\,CaTRPN}{dt}\,[TRPN]_{max}, \qquad
+\frac{d\,ca_i}{dt} = B_{ca_i}\bigl(\ldots - J_{TRPN}\bigr)
+$$
+
+so multiply `get_calcium_binding_rate()` by your model's total troponin concentration
+(`trpnmax`, 0.07 mM in ToR-ORd) to recover $J_{TRPN}$. Omit it and the calcium transient is
+unbuffered: too large, too fast, and silently wrong.
+
+Two details worth knowing:
+
+- **It is the mean rate over the step just taken**, $(\theta^{n+1}-\theta^n)/\Delta t$, not the
+  instantaneous derivative. That makes the reported flux exactly the calcium the model actually
+  absorbed, so a segregated coupling conserves calcium rather than leaking it at
+  $\mathcal{O}(\Delta t)$. The two agree as $\Delta t \to 0$.
+- **It is a fraction, not a concentration.** None of these models knows your total troponin
+  concentration, so the scaling is yours to apply. The rate is zero before the first step and
+  after `reset()`.
+
 ## References
 
 ```{bibliography}

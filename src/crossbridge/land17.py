@@ -159,6 +159,9 @@ class Land2017(CardiacActivationModel):
         self._Lambda_curr = np.ones(n)
         self._has_prev_step = False
 
+        self._prev_bound_ca = np.zeros(n)
+        self._last_dt = 0.0
+
     @classmethod
     def default_parameters(cls) -> dict:
         """
@@ -283,6 +286,8 @@ class Land2017(CardiacActivationModel):
             Sarcomere length rate of change [um/s]. If None, estimated from
             the sarcomere length recorded on the previous call.
         """
+        self._begin_step(dt)
+
         n = self.num_cells
         p = self.p
 
@@ -467,6 +472,16 @@ class Land2017(CardiacActivationModel):
             * (self._As * self.S + self._Aw * self.W)
         )
         return Ka / 1000.0
+
+    def bound_calcium_fraction(self) -> npt.NDArray[np.float64]:
+        """
+        Troponin-C occupancy, i.e. the state variable ``CaTRPN`` itself.
+
+        This is the same quantity ToR-ORd integrates as ``CaTrpn``, so
+        multiplying :meth:`get_calcium_binding_rate` by that model's
+        ``trpnmax`` recovers its ``J_TRPN`` directly.
+        """
+        return self.CaTRPN
 
     def get_passive_tension(self) -> npt.NDArray[np.float64]:
         """Compute passive (spring-dashpot) tension (kPa) from the current state."""

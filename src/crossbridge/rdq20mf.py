@@ -458,6 +458,8 @@ class RDQ20MF(CardiacActivationModel):
             Sarcomere shortening velocity [µm/s]. If None, estimated from
             stored previous SL and current dt.
         """
+        self._begin_step(dt)
+
         # Broadcast scalars to arrays
         if np.isscalar(SL_vals):
             SL_vals = np.full(self.num_cells, float(SL_vals))
@@ -565,8 +567,21 @@ class RDQ20MF(CardiacActivationModel):
         frac = self._frac_SO(self._SL_curr)
         return self.p["a_XB"] * mu0 * frac
 
+    def bound_calcium_fraction(self) -> npt.NDArray[np.float64]:
+        """
+        Marginal probability that a regulatory unit has calcium bound.
+
+        ``x_RU`` is indexed ``[T_{i-1}, T_i, T_{i+1}, C_i, cell]``, so this
+        fixes the unit's own calcium state ``C_i = 1`` and sums out the
+        tropomyosin states -- the calcium analogue of what
+        :meth:`compute_permissivity` does for ``T_i``.
+        """
+        return self.x_RU[:, :, :, 1, :].sum(axis=(0, 1, 2))
+
     def reset(self) -> None:
         """Reset model state to initial (fully non-permissive, no attached XBs)."""
+        self._prev_bound_ca = np.zeros(self.num_cells)
+        self._last_dt = 0.0
         self.x_RU[:] = 0.0
         self.x_RU[0, 0, 0, 0, :] = 1.0
         self.x_XB[:] = 0.0

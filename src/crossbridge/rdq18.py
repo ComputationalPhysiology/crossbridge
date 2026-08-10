@@ -219,6 +219,8 @@ class RDQ18(CardiacActivationModel):
             Current sarcomere lengths for each cell (shape: (num_cells,)).
 
         """
+        self._begin_step(dt_step)
+
         try:
             N_val = len(SL_vals)  # type: ignore[arg-type]
         except TypeError:
@@ -293,26 +295,46 @@ class RDQ18(CardiacActivationModel):
             self.xODE = xODEnew
             dt_acc += dt_curr
 
+    def _state_marginals(self) -> np.ndarray:
+        """
+        Per-node marginal distribution over the four RU states.
+
+        ``xODE`` stores joint probabilities over neighbouring triplets, so a
+        single node's marginal comes from a different axis depending on where
+        it sits: the first node is read off the Left index of the first
+        triplet, the last off the Right index of the last, and the interior
+        nodes off the Center index of their own.
+
+        The four states are ordered ``0N, 1N, 1P, 0P`` (see
+        :meth:`update_probabilities`, where ``0N -> 1N`` carries ``Kon * Ca``):
+        the leading digit is calcium bound, the trailing letter is
+        permissive/non-permissive.
+
+        Returns
+        -------
+        np.ndarray, shape (nu, 4, num_cells)
+        """
+        m0 = np.sum(np.sum(self.xODE[0], axis=1), axis=1)  # (Left, Cell)
+        m_mid = np.sum(np.sum(self.xODE, axis=1), axis=2)  # (nu-2, Center, Cell)
+        m_last = np.sum(np.sum(self.xODE[-1], axis=0), axis=0)  # (Right, Cell)
+        return np.concatenate([m0[np.newaxis], m_mid, m_last[np.newaxis]], axis=0)
+
     def compute_permissivity(self) -> np.ndarray:
         """
         Compute the fraction of permissive states (1P + 0P) for each cell.
         """
-        # Node 0 (Left Boundary) -> Sum b(2), c(3) of xODE[0]
-        m0 = np.sum(np.sum(self.xODE[0], axis=1), axis=1)  # (Left, Cell)
-        # Center Nodes -> Sum a(1), c(3)
-        m_mid = np.sum(np.sum(self.xODE, axis=1), axis=2)  # (nu-2, Center, Cell)
-        # Right Boundary -> Sum a(1), b(2) of xODE[-1]
-        m_last = np.sum(np.sum(self.xODE[-1], axis=0), axis=0)  # (Right, Cell)
+        m = self._state_marginals()
+        return np.mean(m[:, 2, :] + m[:, 3, :], axis=0)
 
-        # Permissive = State 2 (1P) + State 3 (0P)
-        p0 = m0[2, :] + m0[3, :]
-        p_mid = m_mid[:, 2, :] + m_mid[:, 3, :]
-        p_last = m_last[2, :] + m_last[3, :]
+    def bound_calcium_fraction(self) -> npt.NDArray[np.float64]:
+        """
+        Fraction of regulatory units with calcium bound, i.e. states 1N and 1P.
 
-        # Concatenate and Mean over spatial units
-        all_perms = np.vstack([p0[np.newaxis, :], p_mid, p_last[np.newaxis, :]])
-        # Mean over spatial dimension (axis 0)
-        return np.mean(all_perms, axis=0)
+        The calcium counterpart of :meth:`compute_permissivity`, which selects
+        the permissive states 1P and 0P from the same marginals.
+        """
+        m = self._state_marginals()
+        return np.mean(m[:, 1, :] + m[:, 2, :], axis=0)
 
     def advance_step(
         self,
@@ -365,5 +387,7 @@ class RDQ18(CardiacActivationModel):
 
     def reset(self) -> None:
         """Reset model state to initial (fully non-permissive, unbound)."""
+        self._prev_bound_ca = np.zeros(self.num_cells)
+        self._last_dt = 0.0
         self.xODE[:] = 0.0
         self.xODE[:, 0, 0, 0, :] = 1.0
