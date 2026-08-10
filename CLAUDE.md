@@ -20,10 +20,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - All models subclass `CardiacActivationModel` (`src/crossbridge/base.py`):
   `ModelClass(num_cells, Ta_max, params=None)`, `.default_parameters()`,
-  `.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)`, `.get_active_tension()`, `.reset()`.
+  `.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)`, `.get_active_tension()`,
+  `.get_active_stiffness()`, `.reset()`. All are `@abstractmethod` — a subclass missing one fails
+  loudly at instantiation rather than silently returning something wrong.
 - **Adding a new model** — do all of: implement the class in `src/crossbridge/<name>.py`; register
   it in `MODEL_REGISTRY` and `__all__` in `src/crossbridge/__init__.py`; add `docs/models/<name>.md`
-  and list it in `_toc.yml`; add an `automodule` block to `docs/api.rst`.
+  and list it in `_toc.yml`; add an `automodule` block to `docs/api.rst`. The registry-parametrized
+  tests in `tests/test_active_stiffness.py` pick the model up automatically.
+- `get_active_stiffness()` returns `Ka = d(dTa/dt)/d(dLambda/dt)` in the same units as
+  `get_active_tension()` (kPa), per unit dimensionless `Lambda = SL/SL0`. It is what lets a caller
+  couple a model to a mechanics solver without the oscillatory instability of a naive staggered
+  scheme (Regazzoni & Quarteroni 2020) — see `docs/models/index.md`. Formulas are per-family:
+  distortion-decay models (`Land2017`, `Lewalle2024`) use `h*Tref/rs*(As*S + Aw*W)`; `RDQ20MF` uses
+  `a_XB*frac_SO*(mu0_P + mu0_N)`; `RDQ18` is identically zero (no strain-rate feedback).
+  **Never hand-check a new `Ka` by eye** — `tests/test_active_stiffness.py` verifies it by finite
+  difference against the model's own dynamics, which is the only thing that keeps it honest when
+  the ODEs change later.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
   `advance_step` is the portable cross-model entry point; some models also keep an original,

@@ -226,6 +226,18 @@ class Land2017(CardiacActivationModel):
     # Force / length-dependence helpers
     # ------------------------------------------------------------------
 
+    def _h(self, Lambda: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """Length-dependent activation factor h(Lambda), Land 2017 Eq. (20)-(21).
+
+        Shared by :meth:`_forces` and :meth:`get_active_stiffness` so the two
+        cannot drift apart -- both are proportional to the same h.
+        """
+        p = self.p
+        Lambda_clamped = np.minimum(Lambda, 1.2)
+        return np.maximum(
+            0.0, 1.0 + p["beta0"] * (Lambda_clamped + np.minimum(Lambda_clamped, 0.87) - 1.87)
+        )
+
     def _forces(
         self,
         Lambda: npt.NDArray[np.float64],
@@ -240,11 +252,7 @@ class Land2017(CardiacActivationModel):
         F1 = p["a"] * (np.exp(p["b"] * (Lambda - 1.0)) - 1.0)
         F2 = p["a"] * p["k"] * ((Lambda - 1.0) - Cd)
         Tp = F1 + F2
-        Lambda_clamped = np.minimum(Lambda, 1.2)
-        h = np.maximum(
-            0.0, 1.0 + p["beta0"] * (Lambda_clamped + np.minimum(Lambda_clamped, 0.87) - 1.87)
-        )
-        Ta_active = h * p["Tref"] / p["rs"] * (S * (Zs + 1.0) + W * Zw)
+        Ta_active = self._h(Lambda) * p["Tref"] / p["rs"] * (S * (Zs + 1.0) + W * Zw)
         return Ta_active, Tp, Ta_active + Tp
 
     # ------------------------------------------------------------------
@@ -426,6 +434,39 @@ class Land2017(CardiacActivationModel):
         """
         Ta_active, _, _ = self._forces(self._Lambda_curr, self.Cd, self.S, self.W, self.Zs, self.Zw)
         return Ta_active / 1000.0
+
+    def get_active_stiffness(self) -> npt.NDArray[np.float64]:
+        r"""
+        Compute active stiffness (kPa per unit Lambda) from the current state.
+
+        .. math::
+            K_a = h(\Lambda) \frac{T_{ref}}{r_s} \left(A_s S + A_w W\right)
+
+        This is Eq. (50) of Regazzoni & Quarteroni (2020) for the L17 model.
+        It follows from the general definition
+        :math:`K_a = \nabla_r g \cdot \partial h / \partial \dot\lambda` (see
+        :meth:`~crossbridge.base.CardiacActivationModel.get_active_stiffness`)
+        because ``Zs`` and ``Zw`` are the only states whose right-hand sides
+        carry an explicit :math:`\dot\Lambda`,
+
+        .. math::
+            \dot{Z_s} = A_s \dot\Lambda - c_s Z_s, \qquad
+            \dot{Z_w} = A_w \dot\Lambda - c_w Z_w,
+
+        while :math:`\partial T_a/\partial Z_s = h T_{ref} S / r_s` and
+        :math:`\partial T_a/\partial Z_w = h T_{ref} W / r_s`.
+
+        As with :meth:`get_active_tension`, the reference formula is in Pa and
+        the result is converted to kPa. ``Ka >= 0`` always, since ``h``, ``S``
+        and ``W`` are all non-negative and ``As = Aw > 0``.
+        """
+        Ka = (
+            self._h(self._Lambda_curr)
+            * self.p["Tref"]
+            / self.p["rs"]
+            * (self._As * self.S + self._Aw * self.W)
+        )
+        return Ka / 1000.0
 
     def get_passive_tension(self) -> npt.NDArray[np.float64]:
         """Compute passive (spring-dashpot) tension (kPa) from the current state."""

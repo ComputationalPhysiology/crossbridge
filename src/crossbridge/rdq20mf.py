@@ -531,6 +531,40 @@ class RDQ20MF(CardiacActivationModel):
         frac = self._frac_SO(self._SL_curr)
         return self.p["a_XB"] * attached * frac
 
+    def get_active_stiffness(self) -> npt.NDArray[np.float64]:
+        r"""
+        Compute active stiffness (kPa per unit Lambda) from the crossbridge state.
+
+        .. math::
+            K_a = a_{XB}\, \chi_{SO}(SL) \left[\mu_P^0 + \mu_N^0\right]
+
+        This is Eq. (52) of Regazzoni & Quarteroni (2020). Where
+        :meth:`get_active_tension` sums the *first*-order distribution moments
+        (mean crossbridge elongation, hence a force), this sums the
+        *zeroth*-order ones -- the fraction of binding sites actually carrying
+        a crossbridge. Since each attached crossbridge is modelled as a linear
+        spring, that fraction upscaled by ``a_XB`` is precisely the tissue-level
+        stiffness of the attached population, which is why the same expression
+        also follows from a purely physical derivation.
+
+        .. note::
+            The formal derivative :math:`\partial\dot T_a/\partial\dot\lambda`
+            has one further contribution, through the velocity-dependent
+            detachment rate :math:`r = r_0 + \alpha|v|`. It is deliberately
+            omitted here, following R&Q: it is a detachment-rate effect rather
+            than a stiffness, and being proportional to :math:`\mathrm{sign}(v)`
+            it would make ``Ka`` discontinuous at zero shortening velocity --
+            ruinous for the Newton tangent this quantity is meant to supply.
+            Setting ``params={"alpha": 0.0}`` removes it from the model
+            entirely, which is how the finite-difference test verifies this
+            formula exactly.
+        """
+        # x_XB is indexed [moment_order, permissivity, cell]; moment order 0 is
+        # the attached fraction, whereas get_active_tension() uses order 1.
+        mu0 = self.x_XB[0, :, :].sum(axis=0)  # mu0_P + mu0_N, shape (num_cells,)
+        frac = self._frac_SO(self._SL_curr)
+        return self.p["a_XB"] * mu0 * frac
+
     def reset(self) -> None:
         """Reset model state to initial (fully non-permissive, no attached XBs)."""
         self.x_RU[:] = 0.0

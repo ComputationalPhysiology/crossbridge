@@ -280,12 +280,22 @@ class Lewalle2024(CardiacActivationModel):
         F1 = p["a"] * (np.exp(p["b"] * (Lambda - 1.0)) - 1.0)
         F2 = p["a"] * p["k"] * ((Lambda - 1.0) - Cd)
         Tp = F1 + F2
+        Ta_active = self._h(Lambda) * p["Tref"] / p["rs"] * (S * (Zs + 1.0) + W * Zw)
+        return Ta_active, Tp, Ta_active + Tp
+
+    def _h(self, Lambda: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """Length-dependent activation factor h(Lambda), inherited unchanged from
+        Land 2017 (with ``beta0 = 0`` by default here, since this model derives
+        its length dependence from OFF-state force feedback instead).
+
+        Shared by :meth:`_forces` and :meth:`get_active_stiffness` so the two
+        cannot drift apart.
+        """
+        p = self.p
         Lambda_clamped = np.minimum(Lambda, 1.2)
-        h = np.maximum(
+        return np.maximum(
             0.0, 1.0 + p["beta0"] * (Lambda_clamped + np.minimum(Lambda_clamped, 0.87) - 1.87)
         )
-        Ta_active = h * p["Tref"] / p["rs"] * (S * (Zs + 1.0) + W * Zw)
-        return Ta_active, Tp, Ta_active + Tp
 
     def _feedback_rates(
         self,
@@ -514,6 +524,33 @@ class Lewalle2024(CardiacActivationModel):
         """
         Ta_active, _, _ = self._forces(self._Lambda_curr, self.Cd, self.S, self.W, self.Zs, self.Zw)
         return Ta_active / 1000.0
+
+    def get_active_stiffness(self) -> npt.NDArray[np.float64]:
+        r"""
+        Compute active stiffness (kPa per unit Lambda) from the current state.
+
+        .. math::
+            K_a = h(\Lambda) \frac{T_{ref}}{r_s} \left(A_s S + A_w W\right)
+
+        Identical in form to :meth:`crossbridge.Land2017.get_active_stiffness`
+        (R&Q 2020, Eq. 50), because this model inherits Land 2017's
+        distortion-decay crossbridge description unchanged: ``Zs`` and ``Zw``
+        remain the only states whose right-hand sides carry an explicit
+        :math:`\dot\Lambda`, and :math:`T_a` depends on them exactly as before.
+
+        The OFF-state extension does *not* add a term. Its force feedback
+        enters the ``k1``/``k2`` rates through the tension, hence through the
+        states ``Zs``/``Zw``/``S``/``W`` -- but :math:`K_a` is a partial
+        derivative at *frozen* state, so state-mediated paths do not
+        contribute. Only explicit :math:`\dot\Lambda` dependence counts.
+        """
+        Ka = (
+            self._h(self._Lambda_curr)
+            * self.p["Tref"]
+            / self.p["rs"]
+            * (self._As * self.S + self._Aw * self.W)
+        )
+        return Ka / 1000.0
 
     def get_passive_tension(self) -> npt.NDArray[np.float64]:
         """Compute passive (spring-dashpot) tension (kPa) from the current state."""
