@@ -26,6 +26,8 @@ class CardiacActivationModel(ABC):
         """
         self.num_cells = num_cells
         self.Ta_max = Ta_max
+        self._prev_bound_ca = np.zeros(int(num_cells))
+        self._last_dt = 0.0
 
     @classmethod
     @abstractmethod
@@ -127,6 +129,77 @@ class CardiacActivationModel(ABC):
             (shape: `num_cells`).
         """
         pass
+
+    @abstractmethod
+    def bound_calcium_fraction(self) -> npt.NDArray[np.float64]:
+        """
+        Fraction of this model's calcium binding sites currently occupied.
+
+        Dimensionless, in [0, 1], one value per cell. For the Land-family
+        models this is the troponin-C occupancy `CaTRPN`; for the RU-tensor
+        models (RDQ18, RDQ20MF) it is the marginal probability that a
+        regulatory unit has calcium bound.
+
+        Returns
+        -------
+        np.ndarray
+            Occupied fraction for each cell/integration point
+            (shape: `num_cells`).
+        """
+        pass
+
+    def _begin_step(self, dt: float) -> None:
+        """
+        Record the pre-step calcium occupancy. Call at the top of the model's
+        stepping entry point, before any state is modified; this is what makes
+        :meth:`get_calcium_binding_rate` work.
+        """
+        self._prev_bound_ca = np.asarray(self.bound_calcium_fraction(), dtype=float).copy()
+        self._last_dt = float(dt)
+
+    def get_calcium_binding_rate(self) -> npt.NDArray[np.float64]:
+        r"""
+        Rate at which this model sequestered calcium over the last step, as a
+        fraction of its binding sites per second.
+
+        Why this exists
+        ---------------
+        These models bind cytosolic calcium. When one is coupled to an
+        electrophysiology model that has had its own troponin buffer removed --
+        the usual arrangement, since otherwise calcium is buffered twice -- the
+        EP side needs that buffering flux back, or its calcium transient is
+        unbuffered and comes out too large and too fast. Nothing raises; the
+        answer is simply wrong.
+
+        In the ToR-ORd cell model this term appears as
+
+        .. math::
+            J_{TRPN} = \frac{d\,CaTRPN}{dt}\, [TRPN]_{max}, \qquad
+            \frac{d\,ca_i}{dt} = B_{ca_i}\left(\ldots - J_{TRPN}\right)
+
+        so multiply this rate by your total troponin concentration to obtain
+        :math:`J_{TRPN}` in concentration per second.
+
+        What is returned
+        ----------------
+        The **mean rate over the step just taken**,
+        :math:`(\theta^{n+1} - \theta^{n})/\Delta t`, not the instantaneous
+        derivative. That is deliberate: it makes the reported flux exactly the
+        calcium the model actually absorbed over the step, so a segregated
+        coupling conserves calcium instead of leaking it at
+        :math:`\mathcal{O}(\Delta t)`. The two agree as
+        :math:`\Delta t \to 0`.
+
+        Zero before the first step, and after :meth:`reset`.
+
+        Returns
+        -------
+        np.ndarray, shape (num_cells,)
+            Binding rate in units of occupied fraction per second.
+        """
+        if self._last_dt <= 0.0:
+            return np.zeros(self.num_cells)
+        return (self.bound_calcium_fraction() - self._prev_bound_ca) / self._last_dt
 
     @abstractmethod
     def reset(self) -> None:
