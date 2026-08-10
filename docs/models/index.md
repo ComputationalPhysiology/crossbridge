@@ -56,6 +56,47 @@ ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024"
 sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
 ```
 
+## Active stiffness and stable coupling
+
+Every model also reports an **active stiffness** alongside its active tension:
+
+```python
+Ta = sarcomere.get_active_tension()    # kPa
+Ka = sarcomere.get_active_stiffness()  # kPa per unit Lambda = SL / SL0
+```
+
+$K_a = \partial \dot{T_a} / \partial \dot{\lambda}$ measures how strongly the generated tension
+responds to the *rate* of shortening. It exists because coupling any of these models to a tissue
+mechanics solver is less innocent than it looks.
+
+The usual approach is segregated (staggered): advance the activation model, then solve mechanics
+with the resulting tension held fixed. {cite}`regazzoni2020oscillationfree` show that this scheme
+develops non-physical oscillations, and is in fact *not convergent*, whenever the active stiffness
+exceeds the passive stiffness of the tissue — routine in contracting myocardium. Crucially,
+**reducing the time step makes it worse**, so the failure cannot be tuned away.
+
+The fix is to stop treating active tension as a dead load during the mechanics solve and treat it
+as what it physically is — a population of crossbridges acting as springs:
+
+$$
+\mathbf{P}_{act} = \left[T_a + K_a\left(\lambda^{k+1} - \lambda^{k}\right)\right]
+                   \frac{\mathbf{F}\mathbf{f}_0 \otimes \mathbf{f}_0}{|\mathbf{F}\mathbf{f}_0|}
+$$
+
+The added term vanishes as $\Delta t \to 0$, so the scheme stays consistent, but it is
+unconditionally stable. The same $K_a$ is also, to leading order in $\Delta t$, the derivative
+$dT_a/d\lambda$ needed to couple a model *monolithically* through a Newton solve.
+
+Two things to check when consuming `Ka`:
+
+- **Stretch variable.** `Ka` is reported per unit of this package's dimensionless
+  $\Lambda = SL/SL_0$. If your mechanics solver works in a stretch $\lambda$ with
+  $SL = \lambda\,SL_{ref}$ and $SL_{ref} \neq SL_0$, rescale by the chain rule:
+  $K_a^{solver} = K_a \cdot SL_{ref}/SL_0$.
+- **`RDQ18` returns exactly zero**, because it has no strain-rate feedback at all. That means it
+  needs no stabilization — but also that it exhibits no force-velocity (Hill) behaviour, which is
+  a modelling limitation worth knowing before choosing it.
+
 ## References
 
 ```{bibliography}

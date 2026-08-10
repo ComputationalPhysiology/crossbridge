@@ -333,6 +333,36 @@ class RDQ18(CardiacActivationModel):
         """
         return self.Ta_max * self.compute_permissivity()
 
+    def get_active_stiffness(self) -> npt.NDArray[np.float64]:
+        r"""
+        Active stiffness, which is identically **zero** for this model.
+
+        :math:`K_a = \nabla_r g \cdot \partial h/\partial\dot\lambda`, and no
+        right-hand side in RDQ18 contains :math:`\dot\lambda` -- consistent
+        with :meth:`advance_step` accepting ``dSL_vals`` purely for interface
+        compatibility and ignoring it.
+
+        .. warning::
+            This is a real modelling property, not an implementation gap:
+            **RDQ18 has no force-velocity (Hill) behaviour**. It reproduces
+            the length dependence of force through ``Chi(SL)``, but a fibre
+            shortening quickly generates exactly as much tension as an
+            isometric one. Prefer :class:`~crossbridge.RDQ20MF`,
+            :class:`~crossbridge.Land2017` or
+            :class:`~crossbridge.Lewalle2024` when shortening velocity matters.
+
+        The upside is that a segregated coupling to tissue mechanics is
+        unconditionally stable for this model without any stabilization: the
+        instability analysed by Regazzoni & Quarteroni is driven entirely by
+        the strain-rate feedback that RDQ18 does not have.
+
+        Returns
+        -------
+        np.ndarray, shape (num_cells,)
+            An array of zeros.
+        """
+        return np.zeros(self.num_cells)
+
     def reset(self) -> None:
         """Reset model state to initial (fully non-permissive, unbound)."""
         self.xODE[:] = 0.0
