@@ -44,21 +44,19 @@ once the (slowly varying) force feedback is frozen per sub-step:
 - `(B, S, W, Boff, Uoff)` are coupled through a *linear* system once the
   CaTRPN-dependent coefficients and the force-feedback rates k1/k2 are
   frozen at each sub-step's midpoint; this 5x5 system is solved exactly per
-  sub-step via a matrix exponential (`scipy.linalg.expm`), the same
-  technique RDQ20MF uses for its crossbridge sub-system. A handful of
+  sub-step via a matrix exponential, the same technique RDQ20MF uses for its
+  crossbridge sub-system. A handful of
   sub-steps (accuracy, not stability, is the only reason for more than one)
   keep the frozen coefficients tracking the true trajectory.
 
 This makes every sub-step unconditionally stable (no eigenvalue-driven step
-size restriction). The linear solve for the 5x5 system's steady state is
-batched across all cells (`numpy.linalg.solve` on a stacked array), but the
-matrix exponential itself is computed with a per-cell loop: cells can differ
-in CaTRPN by orders of magnitude (e.g. a resting vs. an activated cell in
-the same batch), and `scipy.linalg.expm`'s batched mode was found to return
-silently incorrect results for some matrices when a stack mixes very
-different norms. Each 5x5 exponential is cheap, so this is not the model's
-performance bottleneck -- correctness took priority over avoiding this one
-small loop.
+size restriction). Both the steady-state solve and the matrix exponential
+are batched across all cells. The exponential cannot be batched naively,
+though: cells can differ in CaTRPN by orders of magnitude (e.g. a resting
+vs. an activated cell in the same batch), so an implementation that scales
+and squares the whole stack by one exponent loses the cells far from the
+dominant norm. `crossbridge._linalg.expm_batch` keeps that exponent per
+matrix, so every cell is treated exactly as it would be alone.
 
 Examples
 --------
@@ -76,8 +74,8 @@ Examples
 
 import numpy as np
 import numpy.typing as npt
-from scipy.linalg import expm
 
+from ._linalg import expm_batch, solve_batch
 from .base import CardiacActivationModel
 
 _WHICH_DEP_CHOICES = ("totalforce", "force", "passiveforce", "Lambda")
@@ -490,18 +488,17 @@ class Lewalle2024(CardiacActivationModel):
 
             x0 = np.stack([B, S, W, BE, UE], axis=-1)  # (n, 5)
             try:
-                x_ss = -np.linalg.solve(M, c[:, :, np.newaxis])[:, :, 0]
+                x_ss = -solve_batch(M, c)
             except np.linalg.LinAlgError:
                 x_ss = x0.copy()
             delta = x0 - x_ss
-            # NOTE: scipy.linalg.expm's batched (stacked) mode silently
-            # returns wrong results for some entries when the matrices in
-            # the stack have very different norms (verified empirically) --
-            # which happens here, since CaTRPN**(-nTm/2) can differ by
-            # orders of magnitude across cells with different Ca. So this
-            # is looped per cell rather than batched; each 5x5 exponential
-            # is cheap and this is not the model's performance bottleneck.
-            expM = np.stack([expm(M[i] * h) for i in range(n)])
+            # NOTE: the matrices in this stack have very different
+            # norms, since CaTRPN**(-nTm/2) can differ by orders of
+            # magnitude across cells with different Ca. `expm_batch` picks
+            # its scaling-and-squaring exponent per matrix, which is what
+            # makes batching safe here; sharing one exponent across the
+            # stack is what made the earlier per-cell scipy loop necessary.
+            expM = expm_batch(M, h)
             x_new = x_ss + np.einsum("nij,nj->ni", expM, delta)
             x_new = np.clip(x_new, 0.0, 1.0)
 

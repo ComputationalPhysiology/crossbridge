@@ -18,6 +18,11 @@ requires-python = ">=3.11"
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
+# Optional: makes the batched linear algebra of the Land-family models
+# (crossbridge._linalg) ~10x faster. Everything works without it -- there are
+# pure-numpy fallbacks -- so it is kept out of [test] to stay installable on
+# Python versions numba has not caught up with yet.
+fast = ["numba"]
 demos = ["matplotlib", "zero-mech", "gotranx", "scipy", "tqdm", "numba"]
 docs = [
     "jupyter-book<2.0",
@@ -33,6 +38,7 @@ dev = [
 ]
 all = [
     "crossbridge[test]",
+    "crossbridge[fast]",
     "crossbridge[demos]",
     "crossbridge[docs]",
     "crossbridge[dev]",
