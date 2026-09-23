@@ -32,7 +32,7 @@ exactly; `(B, S, W)` are coupled through a linear 3x3 system once the
 CaTRPN-dependent coefficients are frozen at each sub-step's midpoint, solved
 exactly per sub-step via a matrix exponential. This model has no OFF states
 and no force-feedback rates, so its linear system is a 3x3 subset of
-`Lewalle2024`'s 5x5. Both use `crossbridge._expm.expm_batch`, which scales
+`Lewalle2024`'s 5x5. Both use `crossbridge._linalg.expm_batch`, which scales
 and squares each cell's matrix by its own norm -- necessary because CaTRPN,
 and hence the norm, can differ by orders of magnitude across the cells of one
 batch.
@@ -54,7 +54,7 @@ Examples
 import numpy as np
 import numpy.typing as npt
 
-from ._expm import expm_batch
+from ._linalg import expm_batch, solve_batch
 from .base import CardiacActivationModel
 
 #: Target sub-step size [s] used to refresh the frozen CaTRPN-dependent
@@ -400,7 +400,7 @@ class Land2017(CardiacActivationModel):
 
             x0 = np.stack([B, S, W], axis=-1)  # (n, 3)
             try:
-                x_ss = -np.linalg.solve(M, c[:, :, np.newaxis])[:, :, 0]
+                x_ss = -solve_batch(M, c)
             except np.linalg.LinAlgError:
                 x_ss = x0.copy()
             delta = x0 - x_ss

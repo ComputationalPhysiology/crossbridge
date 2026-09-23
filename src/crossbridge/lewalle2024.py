@@ -55,7 +55,7 @@ are batched across all cells. The exponential cannot be batched naively,
 though: cells can differ in CaTRPN by orders of magnitude (e.g. a resting
 vs. an activated cell in the same batch), so an implementation that scales
 and squares the whole stack by one exponent loses the cells far from the
-dominant norm. `crossbridge._expm.expm_batch` keeps that exponent per
+dominant norm. `crossbridge._linalg.expm_batch` keeps that exponent per
 matrix, so every cell is treated exactly as it would be alone.
 
 Examples
@@ -75,7 +75,7 @@ Examples
 import numpy as np
 import numpy.typing as npt
 
-from ._expm import expm_batch
+from ._linalg import expm_batch, solve_batch
 from .base import CardiacActivationModel
 
 _WHICH_DEP_CHOICES = ("totalforce", "force", "passiveforce", "Lambda")
@@ -488,7 +488,7 @@ class Lewalle2024(CardiacActivationModel):
 
             x0 = np.stack([B, S, W, BE, UE], axis=-1)  # (n, 5)
             try:
-                x_ss = -np.linalg.solve(M, c[:, :, np.newaxis])[:, :, 0]
+                x_ss = -solve_batch(M, c)
             except np.linalg.LinAlgError:
                 x_ss = x0.copy()
             delta = x0 - x_ss
