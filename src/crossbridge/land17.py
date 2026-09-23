@@ -32,10 +32,10 @@ exactly; `(B, S, W)` are coupled through a linear 3x3 system once the
 CaTRPN-dependent coefficients are frozen at each sub-step's midpoint, solved
 exactly per sub-step via a matrix exponential. This model has no OFF states
 and no force-feedback rates, so its linear system is a 3x3 subset of
-`Lewalle2024`'s 5x5 -- cheaper, but kept as the same per-cell
-`scipy.linalg.expm` loop (rather than a batched call) for the same reason:
-CaTRPN can differ by orders of magnitude across cells in one batch, and
-`expm`'s batched mode was found unreliable in that regime.
+`Lewalle2024`'s 5x5. Both use `crossbridge._expm.expm_batch`, which scales
+and squares each cell's matrix by its own norm -- necessary because CaTRPN,
+and hence the norm, can differ by orders of magnitude across the cells of one
+batch.
 
 Examples
 --------
@@ -53,8 +53,8 @@ Examples
 
 import numpy as np
 import numpy.typing as npt
-from scipy.linalg import expm
 
+from ._expm import expm_batch
 from .base import CardiacActivationModel
 
 #: Target sub-step size [s] used to refresh the frozen CaTRPN-dependent
@@ -404,14 +404,14 @@ class Land2017(CardiacActivationModel):
             except np.linalg.LinAlgError:
                 x_ss = x0.copy()
             delta = x0 - x_ss
-            # NOTE: as in Lewalle2024, scipy.linalg.expm's batched (stacked)
-            # mode silently returns wrong results for some entries when the
-            # matrices in the stack have very different norms -- which
-            # happens here too, since CaTRPN**(-nTm/2) can differ by orders
-            # of magnitude across cells with different Ca. So this is
-            # looped per cell rather than batched; each 3x3 exponential is
-            # cheap and this is not the model's performance bottleneck.
-            expM = np.stack([expm(M[i] * h) for i in range(n)])
+            # NOTE: as in Lewalle2024, this stack mixes matrices whose
+            # norms differ by orders of magnitude, since CaTRPN**(-nTm/2)
+            # does across cells with different Ca. `expm_batch` scales and
+            # squares each matrix by its own norm, so batching changes no
+            # cell's result; a batched exponential that shares one exponent
+            # across the stack does, which is why this was once a per-cell
+            # scipy.linalg.expm loop.
+            expM = expm_batch(M, h)
             x_new = x_ss + np.einsum("nij,nj->ni", expM, delta)
             x_new = np.clip(x_new, 0.0, 1.0)
 

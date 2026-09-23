@@ -51,6 +51,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   RDQ20MF additionally only refreshes Ca-dependent rates every `freq_rates_update` (10) steps.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
+- `src/crossbridge/_expm.py`: batched matrix exponential used by `Land2017` (3x3) and
+  `Lewalle2024` (5x5), which exponentiate one matrix per cell per sub-step — at organ scale
+  (~32k cells/rank) that was ~90% of `advance_step`. It exists rather than calling
+  `scipy.linalg.expm` on the stack because each matrix must keep **its own** scaling-and-squaring
+  exponent: cell norms span decades (`CaTRPN ** (-nTm / 2)`), so one shared exponent loses the
+  cells far from the dominant norm, and scipy's stacked mode is a Python loop internally anyway.
+  Two implementations of one algorithm — a numba kernel with the 3x3/5x5 arithmetic hand-unrolled
+  into scalars (70x / 25x over the scipy loop, taking `advance_step` at 31920 cells from 1.8 s to
+  67 ms and from 2.7 s to 205 ms; the unrolling is what buys it, an `@njit` kernel using `@` on
+  3x3 arrays allocates per cell and is no faster than scipy), and a pure-numpy fallback (6.5x / 3x) used when numba is absent, as it is in CI (numba is the optional `fast`
+  extra, kept out of `test` so the suite still installs on Python versions numba lags behind).
+  **The unrolled kernels are written by `tools/generate_expm.py` — change the algorithm there and
+  re-run it rather than editing them by hand.**
+  `tests/test_expm.py` pins the invariant that makes batching legitimate: a matrix alone and the
+  same matrix inside a 5000-matrix mixed-norm batch come back bit-identical.
   `advance_step` is the portable cross-model entry point; some models also keep an original,
   more detailed entry point (e.g. `RDQ18.advance_ODE`).
 - `Ta_max` semantics differ by model: `RDQ18` uses it directly
