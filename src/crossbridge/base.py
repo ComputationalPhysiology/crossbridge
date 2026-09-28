@@ -10,8 +10,12 @@ class CardiacActivationModel(ABC):
     integration points.
     """
 
+    #: The model's parameters: `default_parameters()` updated with `params`. Set by
+    #: each model's `__init__`.
+    p: dict
+
     @abstractmethod
-    def __init__(self, num_cells: int, Ta_max: float, params: dict | None = None):
+    def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
         """
         Initialize the model state and precompute necessary constants.
 
@@ -19,8 +23,9 @@ class CardiacActivationModel(ABC):
         -----------
         num_cells : int
             The number of independent spatial units to simulate simultaneously.
-        Ta_max : float
-            The maximum active tension scaling factor.
+        Ta_max : float, optional
+            The maximum active tension scaling factor. Each model sets its own
+            default (e.g. 100 for RDQ18); the one here only marks it optional.
         params : dict, optional
             Model-specific parameters to override defaults.
         """
