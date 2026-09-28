@@ -47,6 +47,10 @@ all = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# PEP 561 marker. Included by default only from setuptools 69; the floor above is 61.
+crossbridge = ["py.typed"]
+
 
 [tool.pytest.ini_options]
 addopts = [
