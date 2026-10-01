@@ -1,3 +1,5 @@
+from importlib.metadata import metadata
+
 from .base import CardiacActivationModel
 from .rdq18 import RDQ18
 from .rdq20mf import RDQ20MF
@@ -17,6 +19,13 @@ MODEL_REGISTRY: dict[str, type[CardiacActivationModel]] = {
     "Lewalle2024": Lewalle2024,
     "Land2017": Land2017,
 }
+
+meta = metadata("crossbridge")
+__version__ = meta["Version"]
+__author__ = meta["Author-email"]
+__license__ = meta["License-Expression"]
+__email__ = meta["Author-email"]
+__program_name__ = meta["Name"]
 
 
 def get_model(name: str) -> type[CardiacActivationModel]:
