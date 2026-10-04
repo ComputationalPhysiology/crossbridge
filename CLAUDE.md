@@ -46,9 +46,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `tests/test_calcium_binding.py::test_reported_flux_conserves_calcium` asserts that identity to
   1e-10 and is the test to keep working if you touch this.
 - Model `dt` differs by ~40x across the registry (1e-3 s for the Land family, 2.5e-5 s for the
-  RU-tensor models, whose RU integrator is explicit). Tests that drive models generically must step
-  at `model.dt`; driving RDQ18/RDQ20MF at 1e-3 silently denormalizes their probability tensor.
-  RDQ20MF additionally only refreshes Ca-dependent rates every `freq_rates_update` (10) steps.
+  RU-tensor models, whose RU integrator is explicit). `advance_step` takes a step of any length:
+  RDQ18 (`advance_ODE`) and RDQ20MF split it into sub-steps of at most `model.dt`, with calcium and
+  length held over the step, and the Land family sub-steps at its own `_TARGET_SUBSTEP`. Until
+  RDQ20MF did, a longer call took one Euler step of that length and advanced the crossbridges on
+  every 40th call whatever its length, so a coupled solver stepping at 1 ms got no tension for
+  40 ms; the long-step tests in `tests/test_rdq20mf.py` pin the fix. RDQ20MF refreshes its
+  Ca-dependent rates every `freq_rates_update` (10) sub-steps and advances its crossbridges every
+  `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
   `advance_step` is the portable cross-model entry point; some models also keep an original,

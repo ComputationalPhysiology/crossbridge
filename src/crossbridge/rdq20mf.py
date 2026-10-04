@@ -51,6 +51,8 @@ Example Usage:
 >>> Ta = model.get_active_tension()  # shape (10,)
 """
 
+import math
+
 import numpy as np
 import numpy.typing as npt
 from scipy.linalg import expm
@@ -443,20 +445,30 @@ class RDQ20MF(CardiacActivationModel):
         dSL_vals: float | npt.NDArray[np.float64] | None = None,
     ) -> None:
         """
-        Advance the RDQ20-MF model by one time step.
+        Advance the RDQ20-MF model by ``dt``.
+
+        The RU integrator is explicit Euler, which is stable only at about
+        ``self.dt`` (``dt_RU``, 2.5e-5 s). A longer step is therefore split into
+        ``ceil(dt / self.dt)`` equal sub-steps, with ``Ca_val``, ``SL_vals`` and
+        ``dSL_vals`` held over the whole step. The crossbridges advance every
+        ``freqXB`` sub-steps and the Ca-dependent rates are refreshed every
+        ``freq_rates_update``, so a call with ``dt == self.dt`` takes exactly one
+        sub-step, as before.
 
         Parameters
         ----------
         dt : float
-            Time step [s]. Should match `self.dt` (= 2.5e-5 s) for stability.
-            If larger, the step is still taken but may be less accurate.
+            Time step [s], of any length.
         Ca_val : float or np.ndarray, shape (num_cells,)
             Intracellular calcium concentration [µM].
         SL_vals : float or np.ndarray, shape (num_cells,)
             Current sarcomere lengths [µm].
         dSL_vals : float or np.ndarray, shape (num_cells,) or None
-            Sarcomere shortening velocity [µm/s]. If None, estimated from
-            stored previous SL and current dt.
+            Sarcomere shortening velocity [µm/s]. If None, estimated from the
+            sarcomere length stored at the previous crossbridge update. That
+            estimate sees ``SL_vals`` change only between calls, so pass
+            ``dSL_vals`` when ``dt`` is longer than the crossbridge interval
+            (``freqXB`` sub-steps, 1 ms at ``dt_RU``).
         """
         self._begin_step(dt)
 
@@ -475,17 +487,33 @@ class RDQ20MF(CardiacActivationModel):
             f"SL_vals shape {SL_vals.shape} must be ({self.num_cells},)"
         )
 
+        # The tolerance keeps a step that is a whole multiple of dt_RU up to
+        # round-off from gaining a sub-step.
+        num_substeps = max(1, math.ceil(dt / self.dt - 1e-9))
+        h = dt / num_substeps
+        for _ in range(num_substeps):
+            self._substep(h, Ca_arr, SL_vals, dSL_vals)
+
+    def _substep(
+        self,
+        h: float,
+        Ca_arr: float | npt.NDArray[np.float64],
+        SL_vals: npt.NDArray[np.float64],
+        dSL_vals: float | npt.NDArray[np.float64] | None,
+    ) -> None:
+        """One explicit-Euler RU step of length ``h`` (at most ``dt_RU``), and the
+        crossbridge step and rate refresh when they are due."""
         # Update Ca-dependent rates (every freq_rates_update steps)
         if self._step_count % self.freq_rates_update == 0:
             self._update_Ca_rates(Ca_arr, SL_vals)
 
         # --- RU step (explicit Euler) ---
         rhs = self._RU_get_rhs()
-        self.x_RU = self.x_RU + dt * rhs
+        self.x_RU = self.x_RU + h * rhs
         # Clip to avoid tiny negative values from floating-point drift
         np.clip(self.x_RU, 0.0, 1.0, out=self.x_RU)
 
-        # --- XB step (every freqXB steps, i.e., every 1 ms) ---
+        # --- XB step (every freqXB steps, i.e., every 1 ms at dt_RU) ---
         if self._step_count > 0 and self._step_count % self.freqXB == 0:
             if dSL_vals is not None:
                 if np.isscalar(dSL_vals):
@@ -494,8 +522,8 @@ class RDQ20MF(CardiacActivationModel):
                     dSL_arr = np.asarray(dSL_vals, dtype=float)
             else:
                 # Estimate from stored SL history
-                dSL_arr = (SL_vals - self._SL_prev) / (dt * self.freqXB)
-            self._XB_advance(dSL_arr, dt * self.freqXB)
+                dSL_arr = (SL_vals - self._SL_prev) / (h * self.freqXB)
+            self._XB_advance(dSL_arr, h * self.freqXB)
 
         # Store SL for velocity estimation
         if self._step_count % self.freqXB == 0:

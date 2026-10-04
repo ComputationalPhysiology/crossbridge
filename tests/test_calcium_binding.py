@@ -31,12 +31,9 @@ def _beat(model, duration=0.06, ca_peak=10.0, SL=SL_TEST):
     """Drive a model through a synthetic calcium transient.
 
     Steps at the model's own `dt`, which differs by ~40x across the registry
-    (1e-3 s for the Land family, 2.5e-5 s for the RU-tensor models). Driving
-    RDQ18/RDQ20MF at the Land-family step size takes their explicit RU
-    integrator past its stability limit, and the probability tensor stops
-    being normalized -- occupancy climbs above 1 and the reported rate is
-    meaningless. That is a property of those integrators, not of the calcium
-    bookkeeping under test here.
+    (1e-3 s for the Land family, 2.5e-5 s for the RU-tensor models), so that
+    each model resolves its own dynamics and the test stays about the calcium
+    bookkeeping rather than the error of a longer step.
 
     `ca_peak` is deliberately supraphysiological so that every model, including
     Lewalle2024 with its Ca50 of ~5.6 uM, actually binds an appreciable amount.
