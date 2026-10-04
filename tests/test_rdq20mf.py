@@ -382,6 +382,81 @@ def test_xb_velocity_dependence(dt):
 
 
 # ---------------------------------------------------------------------------
+# Steps longer than dt_RU
+# ---------------------------------------------------------------------------
+
+
+def _transient_tension(dt: float, duration: float = 0.06) -> np.ndarray:
+    """Ta after each step of length ``dt`` [s] through a calcium transient.
+
+    Calcium [µM] rises to 2 at 20 ms and decays, and is held at its end-of-step
+    value over each step, as a coupled solver hands it over.
+    """
+    model = RDQ20MF(num_cells=1)
+    Ta = []
+    for i in range(round(duration / dt)):
+        t = (i + 1) * dt
+        Ca = 0.1 + 1.9 * (t / 0.02) * np.exp(1.0 - t / 0.02)
+        model.advance_step(dt, Ca, 2.2, dSL_vals=0.0)
+        Ta.append(model.get_active_tension()[0])
+    return np.array(Ta)
+
+
+def test_long_step_is_substeps_at_dt_RU():
+    """A 1 ms step is 40 sub-steps of dt_RU: bit for bit, with constant inputs."""
+    long, short = RDQ20MF(num_cells=3), RDQ20MF(num_cells=3)
+    Ca, SL, dSL = np.array([0.5, 1.0, 2.0]), np.full(3, 2.2), np.zeros(3)
+    n = round(1e-3 / short.dt)
+    for _ in range(30):
+        long.advance_step(1e-3, Ca, SL, dSL)
+        for _ in range(n):
+            short.advance_step(short.dt, Ca, SL, dSL)
+
+    np.testing.assert_array_equal(long.x_RU, short.x_RU)
+    np.testing.assert_array_equal(long.x_XB, short.x_XB)
+    np.testing.assert_array_equal(long.get_active_tension(), short.get_active_tension())
+
+
+def test_long_steps_follow_the_dt_RU_solution():
+    """Through a calcium transient, 1 ms steps stay within 2 % of stepping at dt_RU,
+    and the difference shrinks with the step.
+
+    Before ``advance_step`` sub-stepped, a 1 ms call took one explicit Euler step
+    of 1 ms and advanced the crossbridges by 40 ms on every 40th call, so Ta
+    stayed 0 for the first 40 ms and then overshot.
+    """
+
+    def every_2_ms(Ta: np.ndarray, dt: float) -> np.ndarray:
+        # A grid all the step sizes share
+        every = round(2e-3 / dt)
+        return Ta[every - 1 :: every]
+
+    dt_RU = RDQ20MF(num_cells=1).dt
+    ref = _transient_tension(dt_RU)
+    errors = {
+        dt: np.max(np.abs(every_2_ms(_transient_tension(dt), dt) - every_2_ms(ref, dt_RU)))
+        for dt in (2e-3, 1e-3, 5e-4)
+    }
+
+    assert errors[1e-3] < 0.02 * ref.max(), (errors, ref.max())
+    assert errors[2e-3] > errors[1e-3] > errors[5e-4], errors
+
+
+def test_step_that_is_not_a_multiple_of_dt_RU():
+    """0.61 ms is 25 equal sub-steps: probability is conserved, and Ta after 61 ms
+    is within 2 % of stepping at dt_RU."""
+    model, ref = RDQ20MF(num_cells=2), RDQ20MF(num_cells=2)
+    Ca, SL, dSL = np.array([1.0, 2.0]), np.full(2, 2.2), np.zeros(2)
+    for _ in range(100):
+        model.advance_step(0.61e-3, Ca, SL, dSL)
+    for _ in range(round(61e-3 / ref.dt)):
+        ref.advance_step(ref.dt, Ca, SL, dSL)
+
+    np.testing.assert_allclose(model.x_RU.sum(axis=(0, 1, 2, 3)), 1.0, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(model.get_active_tension(), ref.get_active_tension(), rtol=0.02)
+
+
+# ---------------------------------------------------------------------------
 # API / interface tests
 # ---------------------------------------------------------------------------
 
