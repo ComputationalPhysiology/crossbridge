@@ -56,6 +56,9 @@ from .base import CardiacActivationModel
 
 
 class RDQ18(CardiacActivationModel):
+    #: Attributes that evolve; see `CardiacActivationModel.get_state`.
+    _state_names = ("xODE",)
+
     def __init__(self, num_cells: int, Ta_max: float = 100.0, params=None):
         """
         Vectorized implementation of the RDQ18 Sarcomere model.

@@ -89,6 +89,20 @@ class Land2017(CardiacActivationModel):
     the other models in this package.
     """
 
+    #: Attributes that evolve; see `CardiacActivationModel.get_state`.
+    _state_names = (
+        "CaTRPN",
+        "B",
+        "S",
+        "W",
+        "Zs",
+        "Zw",
+        "Cd",
+        "_Lambda_prev",
+        "_Lambda_curr",
+        "_has_prev_step",
+    )
+
     def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
         """
         Initialize the Land2017 model.
