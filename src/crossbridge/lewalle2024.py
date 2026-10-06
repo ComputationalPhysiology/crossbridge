@@ -117,6 +117,22 @@ class Lewalle2024(CardiacActivationModel):
     the other models in this package.
     """
 
+    #: Attributes that evolve; see `CardiacActivationModel.get_state`.
+    _state_names = (
+        "CaTRPN",
+        "B",
+        "S",
+        "W",
+        "Zs",
+        "Zw",
+        "Cd",
+        "_Lambda_prev",
+        "_Lambda_curr",
+        "_has_prev_step",
+        "BE",
+        "UE",
+    )
+
     def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
         """
         Initialize the Lewalle2024 model.

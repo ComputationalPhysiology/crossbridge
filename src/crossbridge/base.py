@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 import numpy as np
 import numpy.typing as npt
 
@@ -13,6 +14,11 @@ class CardiacActivationModel(ABC):
     #: The model's parameters: `default_parameters()` updated with `params`. Set by
     #: each model's `__init__`.
     p: dict
+
+    #: Names of the attributes, beyond the base ones (`_prev_bound_ca`,
+    #: `_last_dt`), that make up the model's evolving state. Each model sets its
+    #: own; `get_state` and `set_state` work over them.
+    _state_names: tuple[str, ...] = ()
 
     @abstractmethod
     def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
@@ -213,3 +219,73 @@ class CardiacActivationModel(ABC):
         `__init__`), without re-allocating precomputed constants.
         """
         pass
+
+    def get_state(self) -> dict[str, npt.NDArray[np.float64] | float | int | bool]:
+        """
+        Return a copy of everything that evolves in the model.
+
+        The keys are `_prev_bound_ca` and `_last_dt`, followed by the model's
+        `_state_names`. Arrays are copies with the cell axis **last**; scalars
+        are plain Python ``float``, ``int`` or ``bool``. Restoring the result
+        with :meth:`set_state` on a model of the same class, `num_cells` and
+        parameters makes it advance bit-identically to this one. Parameters
+        and precomputed constants are not state.
+
+        Returns
+        -------
+        dict
+            State name to a copy of its value.
+        """
+        state: dict[str, npt.NDArray[np.float64] | float | int | bool] = {}
+        for name in ("_prev_bound_ca", "_last_dt", *self._state_names):
+            value = getattr(self, name)
+            if isinstance(value, (bool, np.bool_)):
+                state[name] = bool(value)
+            elif isinstance(value, (int, np.integer)):
+                state[name] = int(value)
+            elif np.ndim(value) == 0:
+                state[name] = float(value)
+            else:
+                state[name] = np.array(value, dtype=float, copy=True)
+        return state
+
+    def set_state(self, state: Mapping[str, npt.NDArray[np.float64] | float | int | bool]) -> None:
+        """
+        Restore a state taken by :meth:`get_state`.
+
+        Parameters
+        ----------
+        state : Mapping
+            Must have exactly the keys `get_state` returns.
+
+        Raises
+        ------
+        KeyError
+            Naming every missing and every unexpected key.
+        ValueError
+            Naming any key whose array shape differs from the model's.
+        """
+        names = ("_prev_bound_ca", "_last_dt", *self._state_names)
+        missing = [n for n in names if n not in state]
+        unexpected = [k for k in state if k not in names]
+        if missing or unexpected:
+            raise KeyError(f"set_state: missing keys {missing}, unexpected keys {unexpected}")
+        new: dict[str, npt.NDArray[np.float64] | float | int | bool] = {}
+        for name in names:
+            current = getattr(self, name)
+            value = state[name]
+            if isinstance(current, (bool, np.bool_)):
+                new[name] = bool(value)
+            elif isinstance(current, (int, np.integer)):
+                new[name] = int(value)  # type: ignore[arg-type]
+            elif np.ndim(current) == 0:
+                new[name] = float(value)  # type: ignore[arg-type]
+            else:
+                arr = np.array(value, dtype=float, copy=True)
+                if arr.shape != np.shape(current):
+                    raise ValueError(
+                        f"set_state: {name!r} has shape {arr.shape}, expected {np.shape(current)}"
+                    )
+                new[name] = arr
+        for name, value in new.items():
+            setattr(self, name, value)

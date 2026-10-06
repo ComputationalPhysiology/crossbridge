@@ -77,6 +77,9 @@ class RDQ20MF(CardiacActivationModel):
         of attached crossbridges in cell c.
     """
 
+    #: Attributes that evolve; see `CardiacActivationModel.get_state`.
+    _state_names = ("x_RU", "x_XB", "kC", "_SL_prev", "_SL_curr", "_step_count")
+
     def __init__(self, num_cells: int, Ta_max: float = 1.0, params: dict | None = None):
         """
         Initialize the RDQ20-MF model.
