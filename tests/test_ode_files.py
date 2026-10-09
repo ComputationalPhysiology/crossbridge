@@ -13,16 +13,17 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import Land2017, Lewalle2024
+from crossbridge import RDQ20MF, Land2017, Lewalle2024
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024]
+WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
+    RDQ20MF: ("Ta", "Ka", "bound_ca"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
@@ -43,6 +44,9 @@ GETTERS = {
 }
 FLOOR = {"Ta": 1.0, "Tp": 1.0, "Ka": 1.0, "bound_ca": 1e-3}
 
+#: RDQ20MF's crossbridge moments -> index into `x_XB`.
+RDQ20MF_XB = {"mu0_P": (0, 0), "mu1_P": (1, 0), "mu0_N": (0, 1), "mu1_N": (1, 1)}
+
 _MODULES: dict[type, dict] = {}
 
 
@@ -60,9 +64,19 @@ def _module(cls) -> dict:
     return _MODULES[cls]
 
 
-def _state_of(model, name: str) -> float:
-    """Cell 0 of the model's state `name` (the ODE's name -> the class's attribute)."""
-    return float(getattr(model, name)[0])
+def _state_of(model, name: str, cell: int = 0) -> float:
+    """
+    A cell of the model's state `name` (the ODE's name -> the class's attribute).
+
+    RDQ20MF's tensors are spelled out: `x_{a}{b}{c}{B}` is `x_RU[a, b, c, B]` and
+    `mu0_P, mu1_P, mu0_N, mu1_N` are `x_XB[0, 0], x_XB[1, 0], x_XB[0, 1], x_XB[1, 1]`.
+    """
+    if isinstance(model, RDQ20MF):
+        if name in RDQ20MF_XB:
+            return float(model.x_XB[RDQ20MF_XB[name]][cell])
+        a, b, c, B = (int(ch) for ch in name.removeprefix("x_"))
+        return float(model.x_RU[a, b, c, B, cell])
+    return float(getattr(model, name)[cell])
 
 
 def _inputs(sl, cmax, dt=1e-3):
@@ -231,3 +245,83 @@ def test_lewalle2024_matches_its_ode_without_calcium():
         Lewalle2024, {}, {}, np.zeros_like(Ca), SL, dSL, class_substeps=LEWALLE_SUBSTEPS
     )
     assert max(errors.values()) < 1e-4, errors
+
+
+def _ru_by_name(rhs):
+    """`_RU_get_rhs()` (2, 2, 2, 2, n) -> {"x_abcB": d/dt of that state, (n,)}."""
+    return {f"x_{a}{b}{c}{B}": rhs[a, b, c, B] for a, b, c, B in np.ndindex(2, 2, 2, 2)}
+
+
+def _xb_by_name(rhs):
+    """The XB right-hand side (n, 4), ordered [mu0_P, mu1_P, mu0_N, mu1_N] -> {name: (n,)}."""
+    return {name: rhs[:, i] for i, name in enumerate(RDQ20MF_XB)}
+
+
+def _states_by_name(ns, model):
+    """The generated module's state array (num_states, n), each cell read by `_state_of`."""
+    states = np.zeros((len(ns["init_state_values"]()), model.num_cells))
+    for state in _load(type(model)).states:
+        for cell in range(model.num_cells):
+            states[ns["state_index"](state.name), cell] = _state_of(model, state.name, cell)
+    return states
+
+
+def _params_per_cell(ns, **inputs):
+    """The generated module's parameter array (num_params, n): defaults, then the inputs."""
+    n = len(next(iter(inputs.values())))
+    params = np.repeat(ns["init_parameter_values"]()[:, None], n, axis=1)
+    for name, values in inputs.items():
+        params[ns["parameter_index"](name)] = values
+    return params
+
+
+def test_rdq20mf_derivatives_match_its_ode():
+    """
+    RDQ20MF steps its RU states and crossbridge moments at different rates (explicit
+    Euler at dt_RU for the RU, the exact matrix exponential every freqXB-th step for the
+    moments, rates refreshed every 10th), so trajectories sit 0.55% from the ODE's own.
+    What the file must reproduce is the class's equations, so compare the derivatives at
+    random states, over every branch of frac_SO, and the three outputs.
+    """
+    rng = np.random.default_rng(0)
+    n = 50
+    model = RDQ20MF(n)
+    x_RU = rng.uniform(size=(2, 2, 2, 2, n))
+    x_RU[..., 0] = 0.0
+    x_RU[0, 0, 0, 0, 0] = 1.0  # cell 0: all mass non-permissive, a mean-field denominator is 0
+    model.x_RU = x_RU / x_RU.sum(axis=(0, 1, 2, 3))
+    model.x_XB = rng.normal(scale=0.05, size=(2, 2, n))
+    Ca = rng.uniform(0.0, 3.0, n)
+    SL = rng.uniform(1.2, 4.2, n)  # every branch of frac_SO, and beyond it
+    dSL = rng.uniform(-2.0, 2.0, n)
+    model._update_Ca_rates(Ca, SL)
+    model._SL_curr = SL
+    with np.errstate(invalid="ignore"):  # np.where evaluates both branches of k_PN, k_NP
+        A, b = model._XB_system(dSL)
+    sol = np.stack([model.x_XB[0, 0], model.x_XB[1, 0], model.x_XB[0, 1], model.x_XB[1, 1]], -1)
+    expected = {
+        **_ru_by_name(model._RU_get_rhs()),
+        **_xb_by_name(np.einsum("nij,nj->ni", A, sol) + b),
+    }
+    ns = _module(RDQ20MF)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    with np.errstate(invalid="ignore"):  # the guarded divisions, in the branch not taken
+        rhs = ns["rhs"](0.0, states, params)
+        monitors = ns["monitor_values"](0.0, states, params)
+    for name, value in expected.items():
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], value, rtol=1e-12, atol=1e-15, err_msg=name
+        )
+    for out, method in (
+        ("Ta", "get_active_tension"),
+        ("Ka", "get_active_stiffness"),
+        ("bound_ca", "bound_calcium_fraction"),
+    ):
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, method)(),
+            rtol=1e-12,
+            atol=1e-15,
+            err_msg=out,
+        )
