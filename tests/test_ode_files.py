@@ -150,3 +150,18 @@ def test_land2017_matches_its_ode(protocol):
     Ca, SL, dSL = _inputs(PROTOCOLS[protocol], cmax=3.0)
     errors = _trajectory_errors(Land2017, {}, {}, Ca, SL, dSL)
     assert max(errors.values()) < 1e-4, errors
+
+
+def test_land2017_matches_its_ode_without_calcium():
+    """
+    Without calcium CaTRPN decays towards 0 and kb * CaTRPN^(-nTm/2) grows to about
+    1e6 /s. Land2017's frozen-midpoint sub-steps do not resolve that: S is about 1% low
+    after the first 1 ms step and converges only with the class's own step. The reference
+    agrees across Radau, LSODA and BDF to about 1e-13, so Ka is held to the class's
+    measured accuracy (1.7e-3 of the 1 kPa floor) and the other outputs to 1e-4. A
+    mistranscribed calcium floor or decay would still show as an O(1) error.
+    """
+    Ca, SL, dSL = _inputs(PROTOCOLS["isometric"], cmax=3.0)
+    errors = _trajectory_errors(Land2017, {}, {}, np.zeros_like(Ca), SL, dSL)
+    assert errors.pop("Ka") < 3e-3, errors
+    assert max(errors.values()) < 1e-4, errors
