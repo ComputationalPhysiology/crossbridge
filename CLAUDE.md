@@ -28,7 +28,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   and its `reset()` must clear `_last_dt`.
 - **Adding a new model** — do all of: implement the class in `src/crossbridge/<name>.py`; register
   it in `MODEL_REGISTRY` and `__all__` in `src/crossbridge/__init__.py`; add `docs/models/<name>.md`
-  and list it in `_toc.yml`; add an `automodule` block to `docs/api.rst`. The registry-parametrized
+  and list it in `_toc.yml`; add an `automodule` block to `docs/api.rst`; write
+  `src/crossbridge/<name>.ode` to the contract, set `ODE_FILE`, and pin it with an equivalence test
+  in `tests/test_ode_files.py` (adding the class to `WITH_ODE` and `OUTPUTS` there runs the contract
+  tests on it). A model that cannot be written as an `.ode` keeps `ODE_FILE = None`, says why on its
+  docs page, and joins RDQ18 in `tests/test_ode_file_attribute.py`. The registry-parametrized
   tests in `tests/test_active_stiffness.py` pick the model up automatically.
 - `get_active_stiffness()` returns `Ka = d(dTa/dt)/d(dLambda/dt)` in the same units as
   `get_active_tension()` (kPa), per unit dimensionless `Lambda = SL/SL0`. It is what lets a caller
@@ -78,6 +82,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   ever diverge. `tests/test_linalg.py` also pins the
   invariant that makes batching legitimate: a matrix alone and the same matrix inside a mixed-norm
   batch of thousands come back bit-identical.
+- **`.ode` files.** `src/crossbridge/land2017.ode`, `lewalle2024.ode` and `rdq20mf.ode` (package
+  data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
+  (C, Julia, UFL) and a caller can supply their inputs from another model. Each class points at
+  its file through `ODE_FILE` (`ClassVar[Path | None]` on `CardiacActivationModel`: `None` there and
+  on `RDQ18`). RDQ18 has none on purpose: its 2176 states are 64 families over 34 neighbouring
+  triplets, which gotranx cannot write compactly without array states. A file holds the model's
+  equations, not the class's integrator. The contract every file follows (`docs/models/index.md`,
+  "The models as `.ode` files"): crossbridge's units (s, µM, µm; outputs in kPa); a component
+  `inputs` holding the parameters `Ca` [µM], `SL` [µm] and `dSL` [µm/s], so
+  `ode - ode.get_component("inputs")` leaves exactly those three missing; the intermediates `Ta`,
+  `Ka` (per unit Λ) and `bound_ca`, plus `Tp` for Land2017 and Lewalle2024; every other parameter
+  named and defaulted as in `default_parameters()`, minus the non-ODE keys `dt`, `Ca0`, `dt_RU`;
+  initial states those of `reset()`, a computed one written as a number with its formula in a
+  comment; `Min`/`Max` where the class uses `np.minimum`/`np.maximum`. Lewalle2024's string
+  switches are numbers: `which_dep` 0 `"totalforce"` (default), 1 `"force"`, 2 `"passiveforce"`,
+  3 `"Lambda"`; `dep_k1` 1 `"k1"` (default), 0 `"k2"`.
+- `tests/test_ode_files.py` pins each file to its class. Contract tests run over `WITH_ODE` (inputs
+  removable, outputs are intermediates, parameters equal to `default_parameters()` both ways,
+  initial states equal to `reset()`'s). Land2017 and Lewalle2024 are compared by trajectory
+  (`_trajectory_errors`: the class at 1 ms steps against `solve_ivp`, Radau at rtol 1e-11, on the
+  generated rhs with the same held inputs; each output's max error over its peak, < 1e-4).
+  RDQ20MF is compared by its derivatives at 50 random states (rtol 1e-12), because its multi-rate
+  stepping sits ~0.55% from its own ODE. The looser bounds (Land2017's zero-calcium `Ka`, 3e-3;
+  six Lewalle2024 force-feedback cases in `LEWALLE_BOUNDS`, 3e-4 to 9e-4, with the class at ten
+  calls per 1 ms) are the **class's** integrator error, bounded from measurement after showing that
+  the file is not the cause: the reference agrees across Radau, LSODA and BDF, and the class's
+  error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
+  the same way.
+  The Lewalle2024 cases take ~85 s, most of the suite's ~150 s.
+- **`rdq20mf.ode` is written by `tools/generate_rdq20mf_ode.py`** — change the generator and
+  re-run it (`python3 tools/generate_rdq20mf_ode.py`), never edit the file;
+  `tests/test_rdq20mf_ode_generator.py` fails if the two differ. States: `x_{a}{b}{c}{B}` is
+  `x_RU[a, b, c, B]`; `mu0_P, mu1_P, mu0_N, mu1_N` are `x_XB[0, 0], [1, 0], [0, 1], [1, 1]`.
+  `RDQ20MF._XB_system(dSL_dt) -> (A, b)` is the crossbridge system that `_XB_advance`
+  exponentiates, split out so the derivative test can read it.
+- gotranx is a test dependency only (the `test` extra, `gotranx>=2.4.0`, the first release with
+  `Min`/`Max`). Every test that needs it `importorskip`s it, so the suite passes without it, with
+  those tests skipped; `tests/test_ode_file_attribute.py` and the generator test need no gotranx.
 - `Ta_max` semantics differ by model: `RDQ18` uses it directly
   (`Ta_max * compute_permissivity()`); `RDQ20MF`, `Land2017`, `Lewalle2024` compute tension
   intrinsically from their own params (`a_XB`/`Tref`) and only accept `Ta_max` for interface

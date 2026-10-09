@@ -17,7 +17,7 @@ requires-python = ">=3.11"
 
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "gotranx>=2.4.0"]
 # Optional: makes the batched linear algebra of the Land-family models
 # (crossbridge._linalg) ~10x faster. Everything works without it -- there are
 # pure-numpy fallbacks -- so it is kept out of [test] to stay installable on
