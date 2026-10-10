@@ -398,8 +398,8 @@ class RDQ20MF(CardiacActivationModel):
         diag_N = r + k_NP  # shape (num_cells,)
 
         # Build and solve the 4x4 linear ODE for every cell at once (batched
-        # over the leading axis): d/dt [xP0, xN0, xP1, xN1]^T = A @ [...] + rhs
-        # where P=permissive, N=non-permissive, 0/1=XB sub-states. This mirrors
+        # over the leading axis): d/dt [mu0_P, mu1_P, mu0_N, mu1_N]^T = A @ [...] + rhs
+        # where P=permissive, N=non-permissive, mu0/mu1=zeroth/first XB moment. This mirrors
         # the per-cell system in the reference implementation without a
         # Python-level loop over cells (np.linalg.solve and scipy.linalg.expm
         # both operate on stacks of (num_cells, 4, 4) matrices).

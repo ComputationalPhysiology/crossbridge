@@ -141,11 +141,13 @@ Two details worth knowing:
 
 `Land2017`, `Lewalle2024` and `RDQ20MF` are also written as
 [gotranx](https://github.com/finsberg/gotranx) `.ode` files, which ship with the package. gotranx
-generates Python, C, Julia or UFL code from an `.ode` file, so a model can run outside NumPy, with
-its inputs supplied by other code, such as a cell model that computes the calcium. Each class
-gives the path to its file as `ODE_FILE`. `RDQ18` has no file (see [RDQ18](rdq18.md)), and its
-`ODE_FILE` is `None`, as is the base class's, so `MODEL_REGISTRY[name].ODE_FILE` can be read for
-every model.
+generates Python, C, Julia or UFL code from an `.ode` file, so a model can run outside NumPy. With
+its `inputs` component removed (below), a model takes its inputs from other code, such as a cell
+model that computes the calcium; gotranx generates that form as Python (NumPy or JAX) or UFL code.
+For C, Julia and gotranx's other targets, generate the files as they ship, with the inputs as
+parameters. Each class gives the path to its file as `ODE_FILE`. `RDQ18` has no file (see
+[RDQ18](rdq18.md)), and its `ODE_FILE` is `None`, as is the base class's, so
+`MODEL_REGISTRY[name].ODE_FILE` can be read for every model.
 
 ```python
 import gotranx
@@ -177,7 +179,11 @@ Every file follows the same contract:
 - **Parameters** have the names and defaults of `default_parameters()`, without the keys that set
   up the class's integrator or its initial state: `dt`, `Ca0` and `dt_RU`.
 - **Initial states** are those `reset()` sets. A value the class computes, such as the steady
-  state of CaTRPN at `Ca0`, is written as a number, with its formula in a comment.
+  state of CaTRPN at `Ca0`, is written as a number, with its formula in a comment. That number is
+  the value for the default parameters and `Ca0`, and it does not follow a change of parameters
+  the way `reset()` does: when you change the parameters it depends on (for CaTRPN, `ca50_ref`
+  and `ntrpn` in Land2017; `k_trpn_on`, `k_trpn_off`, `pCa50ref` and `ntrpn` in Lewalle2024), set
+  it explicitly, for example as `init_state_values(CaTRPN=...)` in the generated Python code.
 
 Lewalle2024's two string parameters are numbers in its file:
 

@@ -17,10 +17,11 @@ State naming: `x_{a}{b}{c}{B}` is `x_RU[a, b, c, B]`, the joint probability of
 The equations are those of `RDQ20MF._RU_get_rhs`, `_XB_system` and the tension
 getters, but every state advances together: the class steps the RU states by
 explicit Euler at dt_RU, the crossbridges every 40th step and the rates every 10th,
-so it sits about 0.55% from this ODE. The file follows the contract of the other
-models: component `inputs` (Ca [uM], SL [um], dSL [um/s]), outputs Ta [kPa],
-Ka [kPa per unit Lambda] and bound_ca [fraction], parameters as in
-`default_parameters()` (without dt, Ca0 and dt_RU), initial states as `reset()`.
+so its tension sits about 0.5-0.8% of the peak from this ODE's, depending on the
+protocol. The file follows the contract of the other models: component `inputs`
+(Ca [uM], SL [um], dSL [um/s]), outputs Ta [kPa], Ka [kPa per unit Lambda] and
+bound_ca [fraction], parameters as in `default_parameters()` (without dt, Ca0 and
+dt_RU), initial states as `reset()`.
 """
 
 import itertools

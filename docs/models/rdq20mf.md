@@ -12,8 +12,10 @@ reachable as `RDQ20MF.ODE_FILE`, is this model as a gotranx file, written to the
 two differ. The state `x_abcB` is `x_RU[a, b, c, B]`, and `mu0_P`, `mu1_P`, `mu0_N`, `mu1_N` are
 `x_XB[0, 0]`, `x_XB[1, 0]`, `x_XB[0, 1]`, `x_XB[1, 1]`. The class advances its regulatory units by
 explicit Euler at `dt_RU`, its crossbridges every 40th step and its calcium rates every 10th, so
-its tension differs from that of the ODE by about 0.55% of the peak. `tests/test_ode_files.py`
-therefore compares the file with the class at 50 random states, where the right-hand sides and
-`Ta`, `Ka` and `bound_ca` agree to 1e-12 relative.
+its tension differs from that of the ODE by about 0.5–0.8% of the peak, depending on the
+protocol. `tests/test_ode_files.py` therefore compares the file with the class at 50 states,
+random apart from sarcomere lengths pinned on every piece of the overlap fraction `frac_SO`, its
+boundaries and either side of it, and two cells where a mean-field rate's denominator is 0. There
+the right-hand sides and `Ta`, `Ka` and `bound_ca` agree to 1e-12 relative.
 
 **Reference:** {cite}`regazzoni2020biophysically`

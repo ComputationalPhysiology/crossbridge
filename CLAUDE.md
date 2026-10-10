@@ -102,24 +102,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   removable, outputs are intermediates, parameters equal to `default_parameters()` both ways,
   initial states equal to `reset()`'s). Land2017 and Lewalle2024 are compared by trajectory
   (`_trajectory_errors`: the class at 1 ms steps against `solve_ivp`, Radau at rtol 1e-11, on the
-  generated rhs with the same held inputs; each output's max error over its peak, < 1e-4).
-  RDQ20MF is compared by its derivatives at 50 random states (rtol 1e-12), because its multi-rate
-  stepping sits ~0.55% from its own ODE. The looser bounds (Land2017's zero-calcium `Ka`, 3e-3;
-  six Lewalle2024 force-feedback cases in `LEWALLE_BOUNDS`, 3e-4 to 9e-4, with the class at ten
-  calls per 1 ms) are the **class's** integrator error, bounded from measurement after showing that
+  generated rhs with the same held inputs, started from the class's own state; each output's max
+  error over its peak, < 1e-4). Besides the default parameters, each is run off its defaults
+  (`LAND_OFF_DEFAULTS`; `LEWALLE_OFF_DEFAULTS`, with k1 and with k2 feedback), so that a swapped
+  or hard-coded parameter shows, and Land2017 has a quick release that asserts it reaches
+  `Zs < -1`. A file's computed initial CaTRPN is for the default parameters, so a case off them
+  must start from the class's state.
+  RDQ20MF is compared by its derivatives at 50 states (rtol 1e-12), random apart from pinned `SL`
+  on every piece of `frac_SO` (asserted) and cells all in `x_0000` and in `x_1111` (the mean-field
+  denominators' fallbacks), because its multi-rate stepping sits ~0.5–0.8% (by protocol) from
+  its own ODE. The looser bounds (Land2017's zero-calcium `Ka`, 3e-3; six Lewalle2024
+  force-feedback cases in `LEWALLE_BOUNDS`, 3e-4 to 9e-4, with the class at ten calls per 1 ms)
+  are the **class's** integrator error, bounded from measurement after showing that
   the file is not the cause: the reference agrees across Radau, LSODA and BDF, and the class's
   error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
   the same way.
-  The Lewalle2024 cases take ~85 s, most of the suite's ~150 s.
+  The Lewalle2024 cases take ~105 s, most of the suite's ~190 s.
 - **`rdq20mf.ode` is written by `tools/generate_rdq20mf_ode.py`** — change the generator and
   re-run it (`python3 tools/generate_rdq20mf_ode.py`), never edit the file;
   `tests/test_rdq20mf_ode_generator.py` fails if the two differ. States: `x_{a}{b}{c}{B}` is
   `x_RU[a, b, c, B]`; `mu0_P, mu1_P, mu0_N, mu1_N` are `x_XB[0, 0], [1, 0], [0, 1], [1, 1]`.
   `RDQ20MF._XB_system(dSL_dt) -> (A, b)` is the crossbridge system that `_XB_advance`
   exponentiates, split out so the derivative test can read it.
-- gotranx is a test dependency only (the `test` extra, `gotranx>=2.4.0`, the first release with
-  `Min`/`Max`). Every test that needs it `importorskip`s it, so the suite passes without it, with
-  those tests skipped; `tests/test_ode_file_attribute.py` and the generator test need no gotranx.
+- gotranx is not a runtime dependency. It is in the `test` extra and the `demos` extra (the demos
+  generate ToR-ORd with it), as `gotranx>=2.4.0` in both, the first release with `Min`/`Max`,
+  which `land2017.ode` and `lewalle2024.ode` need. Every test that needs it `importorskip`s it, so
+  the suite passes without it, with those tests skipped; `tests/test_ode_file_attribute.py` and
+  the generator test need no gotranx.
 - `Ta_max` semantics differ by model: `RDQ18` uses it directly
   (`Ta_max * compute_permissivity()`); `RDQ20MF`, `Land2017`, `Lewalle2024` compute tension
   intrinsically from their own params (`a_XB`/`Tref`) and only accept `Ta_max` for interface

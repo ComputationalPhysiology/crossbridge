@@ -23,7 +23,7 @@ test = ["pytest", "pytest-cov", "gotranx>=2.4.0"]
 # pure-numpy fallbacks -- so it is kept out of [test] to stay installable on
 # Python versions numba has not caught up with yet.
 fast = ["numba"]
-demos = ["matplotlib", "zero-mech", "gotranx", "scipy", "tqdm", "numba"]
+demos = ["matplotlib", "zero-mech", "gotranx>=2.4.0", "scipy", "tqdm", "numba"]
 docs = [
     "jupyter-book<2.0",
     "jupytext",
