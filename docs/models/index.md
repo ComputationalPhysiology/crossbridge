@@ -27,6 +27,7 @@ model.default_parameters()      # classmethod: dict of physiological defaults
 model.advance_step(dt, Ca_val, SL_vals, dSL_vals=None)   # integrate one time step
 model.get_active_tension()      # -> np.ndarray, shape (num_cells,), kPa
 model.reset()                   # restore the model's initial state
+ModelClass.ODE_FILE             # Path of the model's gotranx .ode file, or None
 ```
 
 This means a coupled simulation loop written against `advance_step`/`get_active_tension` works
@@ -134,6 +135,72 @@ Two details worth knowing:
 - **It is a fraction, not a concentration.** None of these models knows your total troponin
   concentration, so the scaling is yours to apply. The rate is zero before the first step and
   after `reset()`.
+
+(ode-files)=
+## The models as `.ode` files
+
+`Land2017`, `Lewalle2024` and `RDQ20MF` are also written as
+[gotranx](https://github.com/finsberg/gotranx) `.ode` files, which ship with the package. gotranx
+generates Python, C, Julia or UFL code from an `.ode` file, so a model can run outside NumPy. With
+its `inputs` component removed (below), a model takes its inputs from other code, such as a cell
+model that computes the calcium; gotranx generates that form as Python (NumPy or JAX) or UFL code.
+For C, Julia and gotranx's other targets, generate the files as they ship, with the inputs as
+parameters. Each class gives the path to its file as `ODE_FILE`. `RDQ18` has no file (see
+[RDQ18](rdq18.md)), and its `ODE_FILE` is `None`, as is the base class's, so
+`MODEL_REGISTRY[name].ODE_FILE` can be read for every model.
+
+```python
+import gotranx
+from crossbridge import Land2017
+
+ode = gotranx.load_ode(Land2017.ODE_FILE)
+code = gotranx.cli.gotran2py.get_code(ode)  # Ca, SL and dSL are parameters
+
+coupled = ode - ode.get_component("inputs")
+code = gotranx.cli.gotran2py.get_code(coupled)  # Ca, SL and dSL are missing variables
+```
+
+In the second module, `rhs(t, states, parameters, missing_variables)` takes the inputs in the
+order of its `missing` dict: `Ca`, `SL`, `dSL`. The files use `Min` and `Max`, which gotranx
+supports from version 2.4.0.
+
+Every file follows the same contract:
+
+- **Units** are the classes': time in s, calcium in µM, length in µm. The outputs are in kPa.
+  Land2017 and Lewalle2024 keep their stress parameters (`a`, `Tref`) in Pa, as the classes do.
+- **Inputs.** A component named `inputs` holds three parameters: `Ca` [µM], `SL` [µm] and `dSL`
+  [µm/s]. In the file alone they are parameters, held over a step as `advance_step` holds them.
+  Subtracting the component leaves exactly these three as missing variables, which a cell model
+  or a tissue model then supplies.
+- **Outputs** are intermediates: `Ta` [kPa], `Ka` [kPa per unit $\Lambda = SL/SL_0$] and
+  `bound_ca` [fraction], the values of `get_active_tension()`, `get_active_stiffness()` and
+  `bound_calcium_fraction()`. Land2017 and Lewalle2024 also have `Tp` [kPa], the value of
+  `get_passive_tension()`.
+- **Parameters** have the names and defaults of `default_parameters()`, without the keys that set
+  up the class's integrator or its initial state: `dt`, `Ca0` and `dt_RU`.
+- **Initial states** are those `reset()` sets. A value the class computes, such as the steady
+  state of CaTRPN at `Ca0`, is written as a number, with its formula in a comment. That number is
+  the value for the default parameters and `Ca0`, and it does not follow a change of parameters
+  the way `reset()` does: when you change the parameters it depends on (for CaTRPN, `ca50_ref`
+  and `ntrpn` in Land2017; `k_trpn_on`, `k_trpn_off`, `pCa50ref` and `ntrpn` in Lewalle2024), set
+  it explicitly, for example as `init_state_values(CaTRPN=...)` in the generated Python code.
+
+Lewalle2024's two string parameters are numbers in its file:
+
+| `.ode` parameter | Value | Class parameter |
+|------------------|-------|-----------------|
+| `which_dep`      | 0 (default) | `which_dep = "totalforce"` |
+|                  | 1     | `which_dep = "force"` |
+|                  | 2     | `which_dep = "passiveforce"` |
+|                  | 3     | `which_dep = "Lambda"` |
+| `dep_k1`         | 1 (default) | `dep_k1ork2 = "k1"` |
+|                  | 0     | `dep_k1ork2 = "k2"` |
+
+A file holds the model's equations; the class integrates them with its own scheme.
+`tests/test_ode_files.py` checks the contract for every file, and checks each file against its
+class, as each model's page describes. gotranx's own schemes are first order in the time step, so
+code generated from a file and stepped at the 1 ms step the Land family takes is less accurate
+than the class.
 
 ## References
 

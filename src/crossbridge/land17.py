@@ -51,6 +51,8 @@ Examples
 >>> Ta = model.get_active_tension()  # shape (10,), kPa
 """
 
+from pathlib import Path
+
 import numpy as np
 import numpy.typing as npt
 
@@ -88,6 +90,8 @@ class Land2017(CardiacActivationModel):
     "Lambda" ODE state, since length is imposed by the caller exactly like
     the other models in this package.
     """
+
+    ODE_FILE = Path(__file__).with_name("land2017.ode")
 
     #: Attributes that evolve; see `CardiacActivationModel.get_state`.
     _state_names = (

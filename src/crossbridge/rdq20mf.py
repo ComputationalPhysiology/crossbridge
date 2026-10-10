@@ -52,6 +52,7 @@ Example Usage:
 """
 
 import math
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -76,6 +77,8 @@ class RDQ20MF(CardiacActivationModel):
         first/second attached state, cell). x_XB[1, :, c] gives the fraction
         of attached crossbridges in cell c.
     """
+
+    ODE_FILE = Path(__file__).with_name("rdq20mf.ode")
 
     #: Attributes that evolve; see `CardiacActivationModel.get_state`.
     _state_names = ("x_RU", "x_XB", "kC", "_SL_prev", "_SL_curr", "_step_count")
@@ -346,24 +349,25 @@ class RDQ20MF(CardiacActivationModel):
         )
         return rhs
 
-    def _XB_advance(
-        self,
-        dSL_dt: npt.NDArray[np.float64],
-        dt_xb: float,
-    ) -> None:
+    def _XB_system(
+        self, dSL_dt: npt.NDArray[np.float64]
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
-        Advance the crossbridge state x_XB over dt_xb using the matrix exponential.
+        The crossbridge sub-system ``d/dt x = A x + b`` for every cell.
 
-        The XB sub-system for each cell is a linear 4-state ODE driven by the
-        current permissive fraction and permissive↔non-permissive exchange rates
-        from the RU state. The exact solution is computed via matrix exponential.
+        The state vector is ordered ``[mu0_P, mu1_P, mu0_N, mu1_N]``, i.e.
+        ``[x_XB[0, 0], x_XB[1, 0], x_XB[0, 1], x_XB[1, 1]]``, and ``A`` and ``b`` are
+        driven by the current RU state and the shortening velocity.
 
         Parameters
         ----------
         dSL_dt : np.ndarray, shape (num_cells,)
             Sarcomere shortening velocity [µm/s] for each cell.
-        dt_xb : float
-            Duration of the XB sub-step [s].
+
+        Returns
+        -------
+        A : np.ndarray, shape (num_cells, 4, 4)
+        b : np.ndarray, shape (num_cells, 4)
         """
         p = self.p
         x_RU = self.x_RU  # (2, 2, 2, 2, num_cells)
@@ -394,8 +398,8 @@ class RDQ20MF(CardiacActivationModel):
         diag_N = r + k_NP  # shape (num_cells,)
 
         # Build and solve the 4x4 linear ODE for every cell at once (batched
-        # over the leading axis): d/dt [xP0, xN0, xP1, xN1]^T = A @ [...] + rhs
-        # where P=permissive, N=non-permissive, 0/1=XB sub-states. This mirrors
+        # over the leading axis): d/dt [mu0_P, mu1_P, mu0_N, mu1_N]^T = A @ [...] + rhs
+        # where P=permissive, N=non-permissive, mu0/mu1=zeroth/first XB moment. This mirrors
         # the per-cell system in the reference implementation without a
         # Python-level loop over cells (np.linalg.solve and scipy.linalg.expm
         # both operate on stacks of (num_cells, 4, 4) matrices).
@@ -415,6 +419,29 @@ class RDQ20MF(CardiacActivationModel):
         rhs_vec = np.stack(
             [perm * p["mu0_fP"], perm * p["mu1_fP"], zeros, zeros], axis=-1
         )  # (num_cells, 4), ordered to match the A/state layout above
+
+        return A, rhs_vec
+
+    def _XB_advance(
+        self,
+        dSL_dt: npt.NDArray[np.float64],
+        dt_xb: float,
+    ) -> None:
+        """
+        Advance the crossbridge state x_XB over dt_xb using the matrix exponential.
+
+        The XB sub-system for each cell is a linear 4-state ODE driven by the
+        current permissive fraction and permissive↔non-permissive exchange rates
+        from the RU state. The exact solution is computed via matrix exponential.
+
+        Parameters
+        ----------
+        dSL_dt : np.ndarray, shape (num_cells,)
+            Sarcomere shortening velocity [µm/s] for each cell.
+        dt_xb : float
+            Duration of the XB sub-step [s].
+        """
+        A, rhs_vec = self._XB_system(dSL_dt)
 
         # sol: (num_cells, 4), Fortran-order flatten of x_XB[:, :, c] per cell
         sol = np.stack(

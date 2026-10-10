@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from pathlib import Path
+from typing import ClassVar
 import numpy as np
 import numpy.typing as npt
 
@@ -14,6 +16,9 @@ class CardiacActivationModel(ABC):
     #: The model's parameters: `default_parameters()` updated with `params`. Set by
     #: each model's `__init__`.
     p: dict
+
+    #: This model as a gotranx `.ode` file, or None.
+    ODE_FILE: ClassVar[Path | None] = None
 
     #: Names of the attributes, beyond the base ones (`_prev_bound_ca`,
     #: `_last_dt`), that make up the model's evolving state. Each model sets its

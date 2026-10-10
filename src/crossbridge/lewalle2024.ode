@@ -1,0 +1,120 @@
+# Lewalle et al. (2024) myosin OFF-state force-feedback model, as crossbridge.Lewalle2024
+# implements it (Lewalle, Milburn, Campbell, Niederer, Biophys J 123(18):2996-3009,
+# https://doi.org/10.1016/j.bpj.2024.07.021): Land2017 with two OFF states, BE and UE, whose
+# exchange with the ON states (rates k1, k2) is modulated by force.
+# Loaded through Lewalle2024.ODE_FILE; tests/test_ode_files.py pins it to the class.
+#
+# Units: s, uM, um, Pa internally; Ta, Tp and Ka are reported in kPa (Ka per unit Lambda).
+#
+# The contract: the component `inputs` holds Ca, SL and dSL. Standalone they are
+# parameters, set before each step (zero-order hold, like advance_step). Subtracting
+# the component turns them into missing variables, the seam to an EP or tissue model.
+# The outputs are the intermediates Ta, Ka, bound_ca and Tp.
+#
+# The class's string choices are numeric here:
+#   which_dep: 0 total force (default), 1 active force, 2 passive force, 3 Lambda
+#   dep_k1:    1 the feedback acts on k1 (default), 0 on k2
+# The feedback uses the current Cd, S, W, Zs and Zw. (The class freezes some of them per
+# sub-step: that is its integrator, not the model.)
+
+parameters("inputs",
+Ca = ScalarParam(0.1, unit="uM", description="cytosolic calcium"),
+SL = ScalarParam(1.8, unit="um", description="sarcomere length"),
+dSL = ScalarParam(0.0, unit="um/s", description="sarcomere length rate")
+)
+
+parameters("lewalle",
+SL0 = ScalarParam(1.8, unit="um"),
+a = ScalarParam(241.0, unit="Pa"),
+b = 9.1,
+k = 8.86,
+eta_l = ScalarParam(0.2, unit="s"),
+eta_s = ScalarParam(0.02, unit="s"),
+k_trpn_on = ScalarParam(100.0, unit="1/s"),
+k_trpn_off = ScalarParam(100.0, unit="1/s"),
+ntrpn = 2.58,
+pCa50ref = 5.25,
+beta1 = 0.0,
+ku = ScalarParam(1000.0, unit="1/s"),
+nTm = 2.2,
+trpn50 = 0.35,
+kuw = ScalarParam(4.98, unit="1/s"),
+kws = ScalarParam(19.1, unit="1/s"),
+rw = 0.5,
+rs = 0.25,
+gs = ScalarParam(42.1, unit="1/s"),
+es = 1.0,
+gw = ScalarParam(28.3, unit="1/s"),
+phi = 0.1498,
+Aeff = 125.0,
+beta0 = 0.0,
+Tref = ScalarParam(23000.0, unit="Pa"),
+k1 = ScalarParam(0.877, unit="1/s"),
+k2 = ScalarParam(12.6, unit="1/s"),
+ra = 1.0,
+rb = 1.0,
+koffon = ScalarParam(0.00144064, unit="1/Pa"),
+which_dep = 0.0,
+dep_k1 = 1.0
+)
+
+# CaTRPN starts at its steady state for Ca0 = 0.1 uM:
+# 1 / (1 + (k_trpn_off / k_trpn_on) * (10**-pCa50ref / 1e-7)**ntrpn).
+states("troponin", CaTRPN = 3.0548277906363625e-05)
+states("crossbridges", B = 0.0, S = 0.0, W = 0.0, BE = 0.0, UE = 0.0, Zs = 0.0, Zw = 0.0)
+states("passive", Cd = 0.0)
+
+expressions("kinematics")
+Lambda = SL / SL0
+dLambda = dSL / SL0
+Lambda_c = Min(Lambda, 1.2)
+
+expressions("troponin")
+Ca50 = 10.0 ** (-pCa50ref) + beta1 * (Lambda_c - 1.0)
+kon = k_trpn_on * (Max(Ca, 1e-6) * 1e-6 / Max(Ca50, 1e-12)) ** ntrpn
+dCaTRPN_dt = kon * (1.0 - CaTRPN) - k_trpn_off * CaTRPN
+bound_ca = CaTRPN
+
+expressions("passive")
+Cd_target = Lambda - 1.0
+eta = Conditional(Gt(Cd_target - Cd, 0.0), eta_l, eta_s)
+dCd_dt = k / eta * (Cd_target - Cd)
+F1 = a * (exp(b * (Lambda - 1.0)) - 1.0)
+F2 = a * k * ((Lambda - 1.0) - Cd)
+Tp_Pa = F1 + F2
+
+expressions("tension")
+h_raw = 1.0 + beta0 * (Lambda_c + Min(Lambda_c, 0.87) - 1.87)
+h = Max(h_raw, 0.0)
+Ta_Pa = h * Tref / rs * (S * (Zs + 1.0) + W * Zw)
+Ttotal_Pa = Ta_Pa + Tp_Pa
+Ta = Ta_Pa / 1000.0
+Tp = Tp_Pa / 1000.0
+Aw = Aeff * rs / ((1.0 - rs) * rw + rs)
+As = Aw
+Ka = h * Tref / rs * (As * S + Aw * W) / 1000.0
+
+expressions("feedback")
+fb = Conditional(Eq(which_dep, 0.0), Max(Ttotal_Pa, 0.0), Conditional(Eq(which_dep, 1.0), Max(Ta_Pa, 0.0), Conditional(Eq(which_dep, 2.0), Max(Tp_Pa, 0.0), Lambda)))
+k1_fb = Conditional(Eq(dep_k1, 1.0), k1 * (rb + koffon * fb), k1 * ra)
+k2_fb = Conditional(Eq(dep_k1, 1.0), k2 * ra, k2 / (rb + koffon * fb))
+
+expressions("crossbridges")
+kb = ku * trpn50 ** nTm / (1.0 - rs - (1.0 - rs) * rw)
+kwu = kuw * (1.0 / rw - 1.0) - kws
+ksu = kws * rw * (1.0 / rs - 1.0)
+cw = phi * kuw * ((1.0 - rs) * (1.0 - rw)) / ((1.0 - rs) * rw)
+cs = phi * kws * ((1.0 - rs) * rw) / rs
+CaTRPN_safe = Max(CaTRPN, 1e-12)
+kb_neg = kb * CaTRPN_safe ** (-nTm / 2.0)
+ku_pos = ku * CaTRPN_safe ** (nTm / 2.0)
+U = 1.0 - B - S - W - BE - UE
+gwu = gw * Abs(Zw)
+gsu = Conditional(Lt(Zs, -es), -gs * (Zs + es), Conditional(Gt(Zs, 0.0), gs * Zs, 0.0))
+dB_dt = kb_neg * U - ku_pos * B - k2_fb * B + k1_fb * BE
+dS_dt = kws * W - (ksu + gsu) * S
+dW_dt = kuw * U - (kwu + kws + gwu) * W
+dBE_dt = k2_fb * B - (ku_pos + k1_fb) * BE + kb_neg * UE
+dUE_dt = k2_fb * U + ku_pos * BE - (kb_neg + k1_fb) * UE
+dZw_dt = Aw * dLambda - cw * Zw
+dZs_dt = As * dLambda - cs * Zs

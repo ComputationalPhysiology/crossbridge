@@ -7,4 +7,11 @@ Spatially explicit Markov Chain models of the sarcomere accurately capture lengt
 
 The RDQ18 model overcomes this by using a physically motivated assumption of conditional independence to track joint probabilities of triplets of consecutive units. This condenses the system to roughly 2,200 variables, resulting in a system of ODEs that solves 10,000 times faster than the original Monte Carlo method while maintaining high accuracy.
 
+**No `.ode` file.** Unlike the other models, RDQ18 is not written as a gotranx file, and
+`RDQ18.ODE_FILE` is `None`. Its 2176 states (at the default `nu = 36`) are 64 families, the
+4 × 4 × 4 joint states of a triplet of units, over 34 neighbouring triplets, each coupled to the
+triplets beside it. gotranx cannot write that compactly: it has no array states (an index, access
+to neighbours with boundary values, sums over the index), so a file would spell out every state
+and equation by name.
+
 **Reference:** {cite}`regazzoni2018active`
