@@ -2,12 +2,13 @@
 
 The `demo/` folder contains several scripts demonstrating how to couple the `crossbridge` model to different physics scales:
 
-## 1. Reproducing the Papers (`reproduce_figures.py`, `reproduce_figures_rdq20mf.py`, `reproduce_figures_land2017.py`, `reproduce_figures_lewalle2024.py`)
+## 1. Reproducing the Papers (`reproduce_figures.py`, `reproduce_figures_rdq20mf.py`, `reproduce_figures_land2017.py`, `reproduce_figures_lewalle2024.py`, `reproduce_figures_tewari2016.py`)
 Run each standalone model to recreate the original validation figures/results from its paper.
 * **RDQ18 / RDQ20MF — Steady State:** Computes force-calcium relationships, length-dependent activation, and Hill curves.
 * **RDQ18 / RDQ20MF — Dynamic Twitches:** Simulates twitches under varying calcium transients and fixed sarcomere lengths.
 * **RDQ18 — Tension Redevelopment ($k_{tr}$):** Simulates sudden crossbridge detachment and subsequent exponential recovery.
 * **Land2017:** Passive viscoelastic step response, the steady-state force-calcium relationship at three sarcomere lengths (its ad hoc `beta0`/`beta1` length-dependent activation), the biphasic quick-stretch response driven by the distortion-decay crossbridge model, and isometric twitches at different SL using the paper's "whole organ model" recalibration (see the script's docstring for what is/isn't a literal figure reproduction, since the paper's own whole-organ finite-element figure is out of scope for this package).
+* **Tewari2016:** Twitches driven by the Janssen et al. (2002) calcium transients at 2-10 Hz and 1.9-2.2 um (the paper's Figs. 2, 3 and F.1, against its model and data), the steady-state force-calcium relation at five sarcomere lengths (Fig. E.1, Table E.1), metabolite and calcium effects on force development (Fig. G.1), tension redevelopment after a slack-restretch (Figs. 4 and H.1), and the reading of the paper's reference temperature this implementation depends on. The script's docstring lists what does and does not reproduce; the paper's heart and circulation figures are out of scope.
 * **Lewalle2024:** Steady-state force-pCa curves at two sarcomere lengths, the length dependence of active tension (Frank-Starling), and isometric twitches at different SL — showing that myosin OFF-state feedback on total force alone reproduces length-dependent activation (see the script's docstring for what is/isn't a literal figure reproduction, since some of the paper's figures compare against an unimplemented baseline model).
 
 ## 2. Model Comparison (`compare_models.py`)

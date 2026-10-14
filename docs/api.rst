@@ -33,6 +33,12 @@ lewalle2024
 .. automodule:: crossbridge.lewalle2024
     :members:
 
+tewari2016
+----------
+
+.. automodule:: crossbridge.tewari2016
+    :members:
+
 utils
 -----
 

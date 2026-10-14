@@ -5,7 +5,7 @@
 ## The Mathematical Models
 `crossbridge` implements several reduced-order models of cardiac myofilament activation
 ([RDQ18](docs/models/rdq18.md), [RDQ20-MF](docs/models/rdq20mf.md), [Land2017](docs/models/land2017.md),
-[Lewalle2024](docs/models/lewalle2024.md)), all sharing a common interface so that a coupled electromechanics simulation can swap between them with minimal code
+[Lewalle2024](docs/models/lewalle2024.md), [Tewari2016](docs/models/tewari2016.md)), all sharing a common interface so that a coupled electromechanics simulation can swap between them with minimal code
 changes. See [docs/models](docs/models/index.md) for a description and reference for each model.
 
 ## Installation
