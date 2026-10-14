@@ -13,18 +13,19 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import RDQ20MF, Land2017, Lewalle2024, Tewari2016
+from crossbridge import RDQ20MF, Land2017, Lewalle2024, Marzban2020, Tewari2016
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016]
+WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016, Marzban2020]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
     RDQ20MF: ("Ta", "Ka", "bound_ca"),
     Tewari2016: ("Ta", "Ka", "bound_ca", "Tp"),
+    Marzban2020: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
@@ -443,7 +444,7 @@ def test_rdq20mf_derivatives_match_its_ode():
         )
 
 
-#: SL(t) [um] for the strain-moment model Tewari2016: titin on both sides of
+#: SL(t) [um] for the moment models, Tewari2016 and Marzban2020: titin on both sides of
 #: SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and relengthening,
 #: and a stretch and a release at peak tension (t = 60-70 ms under `_inputs(..., cmax=3.0)`).
 MOMENT_PROTOCOLS = {
@@ -457,7 +458,7 @@ MOMENT_PROTOCOLS = {
 
 
 @pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
-@pytest.mark.parametrize("cls", [Tewari2016])
+@pytest.mark.parametrize("cls", [Tewari2016, Marzban2020])
 def test_moment_models_match_their_ode(cls, protocol):
     Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
     errors = _trajectory_errors(cls, {}, {}, Ca, SL, dSL)
@@ -561,6 +562,119 @@ def test_tewari2016_derivatives_match_its_ode():
             rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
         )
     for out in OUTPUTS[Tewari2016]:
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, GETTERS[out])(),
+            rtol=1e-12,
+            atol=1e-13,
+            err_msg=out,
+        )
+
+
+def test_marzban2020_matches_its_ode_through_fast_shortening():
+    """
+    Shortening 0.3 um in 4 ms at peak tension compresses the attached crossbridges until
+    the active stress is about -20 kPa, past -1 / k_force, where the force-dependent
+    OFF -> ON rate is floored at zero. The test asserts the class gets there.
+    """
+    Ca, SL, dSL = _inputs(lambda t: 2.2 - 0.3 * np.clip((t - 0.06) / 0.004, 0, 1), cmax=3.0)
+    drive: list[float] = []
+    errors = _trajectory_errors(
+        Marzban2020,
+        {},
+        {},
+        Ca,
+        SL,
+        dSL,
+        observe=lambda m: drive.append(1.0 + m.p["k_force"] * m.get_active_tension()[0]),
+    )
+    assert min(drive) < 0.0, min(drive)
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Marzban2020's parameters off their defaults, no two of them equal.
+MARZBAN_OFF_DEFAULTS = {
+    "MgATP": 6.0,
+    "MgADP": 0.05,
+    "Pi": 1.8,
+    "K_MgATP": 0.52,
+    "K_MgADP": 0.21,
+    "K_Pi": 3.7,
+    "k_on": 95.0,
+    "k_off": 690.0,
+    "K_coop": 8.4,
+    "k_SR": 17.0,
+    "k_force": 1.31,
+    "k_mSR": 46.0,
+    "ka": 540.0,
+    "kd": 290.0,
+    "k1": 118.0,
+    "km1": 23.0,
+    "k2": 780.0,
+    "km2": 39.0,
+    "k3": 151.0,
+    "alpha1": 11.0,
+    "alpha2": 8.6,
+    "alpha3": 6.4,
+    "s3": 0.0107,
+    "kstiff1": 1690.0,
+    "kstiff2": 47000.0,
+    "dr": 0.0093,
+    "k_passive": 3.1,
+    "SL_rest_pas": 1.83,
+    "PCon_collagen": 0.0017,
+    "PExp_collagen": 64.0,
+    "SL_collagen": 2.21,
+}
+
+
+def test_marzban2020_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["collagen"], cmax=3.0)
+    params = MARZBAN_OFF_DEFAULTS
+    errors = _trajectory_errors(Marzban2020, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_marzban2020_derivatives_match_its_ode():
+    """
+    The class's system is the tangent of the right-hand side, so at the state it was
+    linearized about it equals the right-hand side itself. Compared at 60 random states,
+    with SL below L_thin (no overlap) and on SL_collagen, and the force-dependent
+    recruitment both floored and not (asserted).
+    """
+    rng = np.random.default_rng(2)
+    n = 60
+    model = Marzban2020(n)
+    model.N, model.U_NR = rng.uniform(0.0, 0.6, n), rng.uniform(size=n)
+    for k in (1, 2, 3):
+        setattr(model, f"p{k}_0", rng.uniform(0.0, 0.12, n))
+        setattr(model, f"p{k}_1", rng.normal(scale=0.01, size=n))
+        setattr(model, f"p{k}_2", rng.uniform(0.0, 1e-3, n))
+    model.p2_1[:3] = model.p3_1[:3] = -0.05  # compressed: sigma_XB < -1 / k_force
+    SL = rng.uniform(1.6, 2.4, n)
+    SL[3:6] = [1.0, 1.15, 2.25]
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    OV_thick = model._overlap(SL)
+    drive = 1.0 + model.p["k_force"] * model._sigma_xb(x, OV_thick)
+    assert np.any(drive < 0.0) and np.any(drive > 0.0)
+    M = model._system(x, Ca, dSL, OV_thick)
+    expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
+
+    ns = _module(Marzban2020)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    rows = ("N", "U_NR", *(f"p{k}_{order}" for k in (1, 2, 3) for order in (0, 1, 2)))
+    for row, name in enumerate(rows):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-11, atol=1e-11, err_msg=name
+        )
+    for out in OUTPUTS[Marzban2020]:
         np.testing.assert_allclose(
             monitors[ns["monitor_index"](out)],
             getattr(model, GETTERS[out])(),

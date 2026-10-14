@@ -27,10 +27,18 @@ import copy
 import numpy as np
 import pytest
 
-from crossbridge import MODEL_REGISTRY, RDQ18, Land2017, Lewalle2024, RDQ20MF, Tewari2016
+from crossbridge import (
+    MODEL_REGISTRY,
+    RDQ18,
+    Land2017,
+    Lewalle2024,
+    Marzban2020,
+    RDQ20MF,
+    Tewari2016,
+)
 
 # Models with genuine strain-rate feedback, for which R&Q Eq. (42) is exact.
-VELOCITY_DEPENDENT = [Land2017, Lewalle2024, Tewari2016]
+VELOCITY_DEPENDENT = [Land2017, Lewalle2024, Tewari2016, Marzban2020]
 
 #: Step [s] of the finite difference below, where the default 1e-5 s is too long: the
 #: difference is first order in dt times the fastest rate, and Tewari2016's crossbridges
