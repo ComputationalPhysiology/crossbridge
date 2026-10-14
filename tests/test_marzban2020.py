@@ -82,6 +82,11 @@ def test_step_length_independence():
 
 
 def test_vectorization_independence():
+    """
+    Cells at different Ca and SL evolve exactly as they do alone, to the last bit:
+    a cell differing by an ulp shows up as a 1e-9 relative error in a calcium
+    binding rate near steady state, a difference of nearly equal fractions.
+    """
     Ca, SL = np.array([0.5, 1.5, 3.0]), np.array([1.9, 2.1, 2.3])
     batch = Marzban2020(num_cells=3)
     for _ in range(50):
@@ -90,9 +95,10 @@ def test_vectorization_independence():
         single = Marzban2020(num_cells=1)
         for _ in range(50):
             single.advance_step(1e-3, Ca[i : i + 1], SL[i : i + 1], 0.0)
-        np.testing.assert_allclose(
-            batch.get_active_tension()[i], single.get_active_tension()[0], rtol=1e-12
-        )
+        batch_state = batch.get_state()
+        for key, value in single.get_state().items():
+            if np.ndim(value):
+                np.testing.assert_array_equal(batch_state[key][i], value[0], err_msg=key)
 
 
 # ---------------------------------------------------------------------------

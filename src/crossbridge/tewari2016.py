@@ -441,11 +441,16 @@ class Tewari2016(CardiacActivationModel):
         h: float,
     ) -> npt.NDArray[np.float64]:
         """One exponential-midpoint sub-step of length h; x has shape (12, n)."""
-        x1 = np.vstack([x, np.ones(self.num_cells)]).T  # (n, 13)
+        # [x, 1] per cell, contiguous: a stacked matmul then gives each cell the
+        # same arithmetic whatever its batch-mates, which einsum over the
+        # transposed stack did not (cells differed from running alone by ~1 ulp).
+        x1 = np.empty((self.num_cells, _SIZE, 1))
+        x1[:, :_ONE, 0] = x.T
+        x1[:, _ONE, 0] = 1.0
 
         def solve(coefficients, step):
             M = self._system(Ca, v, *coefficients)
-            return np.einsum("nij,nj->in", expm_batch(M, step), x1)[:_ONE]
+            return np.ascontiguousarray((expm_batch(M, step) @ x1)[:, :_ONE, 0].T)
 
         x_half = solve(self._coefficients(x, OV_thin), 0.5 * h)
         return solve(self._coefficients(x_half, OV_thin), h)

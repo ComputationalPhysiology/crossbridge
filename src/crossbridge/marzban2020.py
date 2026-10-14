@@ -312,15 +312,18 @@ class Marzban2020(CardiacActivationModel):
         M[:, _N, _P10] = M[:, _N, _P20] = M[:, _N, _P30] = dN_dA
         M[:, _N, _ONE] = dN - dN_dN * N - dN_dA * A
         # Eq. (10): OFF -> ON recruited by force, its rate floored at zero
-        drive = 1.0 + p["k_force"] * self._sigma_xb(x, OV_thick)
+        sigma = self._sigma_xb(x, OV_thick)
+        drive = 1.0 + p["k_force"] * sigma
         recruiting = drive > 0.0
         k_recruit = p["k_SR"] * np.where(recruiting, drive, 0.0)
         dU = k_recruit * (1.0 - U) - p["k_mSR"] * U
-        dU_dsigma = np.where(recruiting, p["k_SR"] * p["k_force"] * (1.0 - U), 0.0) * OV_thick
-        M[:, _U, _U] = -k_recruit - p["k_mSR"]
-        M[:, _U, _P30] = dU_dsigma * p["kstiff2"] * p["dr"]
-        M[:, _U, _P21] = M[:, _U, _P31] = dU_dsigma * p["kstiff1"]
-        M[:, _U, _ONE] = dU - np.einsum("nj,jn->n", M[:, _U, :_ONE], x)
+        dU_dU = -k_recruit - p["k_mSR"]
+        dU_dsigma = np.where(recruiting, p["k_SR"] * p["k_force"] * (1.0 - U), 0.0)
+        M[:, _U, _U] = dU_dU
+        M[:, _U, _P30] = dU_dsigma * OV_thick * p["kstiff2"] * p["dr"]
+        M[:, _U, _P21] = M[:, _U, _P31] = dU_dsigma * OV_thick * p["kstiff1"]
+        # sigma is linear in the moments, so their columns times x sum to it
+        M[:, _U, _ONE] = dU - dU_dU * U - dU_dsigma * sigma
         # Attachment ka U P OV_thick of ON heads to permissible sites, into A1
         # at zero strain: its tangent in U and in P = 1 - N - A.
         ka = p["ka"] * OV_thick
@@ -395,11 +398,16 @@ class Marzban2020(CardiacActivationModel):
         h: float,
     ) -> npt.NDArray[np.float64]:
         """One exponential-midpoint sub-step of length h; x has shape (11, n)."""
-        x1 = np.vstack([x, np.ones(self.num_cells)]).T  # (n, 12)
+        # [x, 1] per cell, contiguous: a stacked matmul then gives each cell the
+        # same arithmetic whatever its batch-mates, which einsum over the
+        # transposed stack did not (cells differed from running alone by ~1 ulp).
+        x1 = np.empty((self.num_cells, _SIZE, 1))
+        x1[:, :_ONE, 0] = x.T
+        x1[:, _ONE, 0] = 1.0
 
         def solve(about, step):
             M = self._system(about, Ca, v, OV_thick)
-            return np.einsum("nij,nj->in", expm_batch(M, step), x1)[:_ONE]
+            return np.ascontiguousarray((expm_batch(M, step) @ x1)[:, :_ONE, 0].T)
 
         x_half = solve(x, 0.5 * h)
         return solve(x_half, h)
