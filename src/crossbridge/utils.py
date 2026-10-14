@@ -56,6 +56,47 @@ def calcium_trace(
     return val
 
 
+#: Fits of ``Ca(phi) = a / phi * exp(-b (ln(phi) + c)^2) + Ca0`` to the rat trabecula
+#: calcium transients of Janssen et al. (2002), by Marzban et al. (2020) (`para_fitted_Ca`
+#: in CardiovascularMechanics.m of github.com/beards-lab/Rat-Cardiac-Energetic). Rows:
+#: stimulation frequency [Hz], a, b, c [-] and Ca0 [uM].
+JANSSEN_CALCIUM_FITS = np.array(
+    [
+        [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+        [0.0838, 0.1306, 0.1802, 0.2557, 0.3099, 0.3613, 0.408, 0.4539, 0.4602],
+        [0.7513, 0.8756, 1.0274, 1.4988, 1.6107, 1.6741, 1.7902, 2.1398, 1.9832],
+        [2.237, 2.0486, 1.948, 1.852, 1.6932, 1.6773, 1.5988, 1.4952, 1.4524],
+        [0.1865, 0.1815, 0.1709, 0.1693, 0.161, 0.1661, 0.1425, 0.1458, 0.1222],
+    ]
+)
+
+
+def janssen_calcium(t: float | np.ndarray, frequency: float) -> np.ndarray:
+    """Rat cardiac calcium transient [uM] at 37 degC, paced at `frequency` [Hz].
+
+    The transients Janssen et al. (2002) measured in rat trabeculae, which
+    Tewari et al. (2016) and Marzban et al. (2020) used to identify their
+    myofilament models, as Marzban et al. fitted them: a log-normal-shaped
+    pulse each period, ``a / phi * exp(-b (ln(phi) + c)^2) + Ca0`` with ``phi``
+    the phase within the beat (see `JANSSEN_CALCIUM_FITS`). Between the fitted
+    frequencies (2-10 Hz) the coefficients are interpolated with pchip, as in
+    that code. Periodic in `t` [s], with each beat starting at t = 0 mod 1/f
+    (offset by 0.1 ms, as in the original, to keep phi > 0).
+
+    These are fits to measured data, unlike the synthetic `calcium_trace`;
+    their peaks are 1.3 uM (2 Hz) to 2.4 uM (7 Hz).
+    """
+    from scipy.interpolate import PchipInterpolator
+
+    freqs, *rows = JANSSEN_CALCIUM_FITS
+    if not freqs[0] <= frequency <= freqs[-1]:
+        raise ValueError(f"frequency {frequency} Hz is outside the fitted 2-10 Hz")
+    a, b, c, Ca0 = (float(PchipInterpolator(freqs, row)(frequency)) for row in rows)
+    period = 1.0 / frequency
+    phi = np.mod(np.asarray(t, dtype=float) + 1e-4, period) / period
+    return a / phi * np.exp(-b * (np.log(phi) + c) ** 2) + Ca0
+
+
 def sl_trace(
     t,
     SL0=2.2,
