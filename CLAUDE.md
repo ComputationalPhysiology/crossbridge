@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024), all sharing one interface so they're swappable.
+- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024, Tewari2016, Marzban2020), all sharing one interface so they're swappable.
 - Published on PyPI as `crossbridge`.
 - Model background/references live in `docs/models/`, not README.md (kept short by design).
 
@@ -39,7 +39,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   couple a model to a mechanics solver without the oscillatory instability of a naive staggered
   scheme (Regazzoni & Quarteroni 2020) — see `docs/models/index.md`. Formulas are per-family:
   distortion-decay models (`Land2017`, `Lewalle2024`) use `h*Tref/rs*(As*S + Aw*W)`; `RDQ20MF` uses
-  `a_XB*frac_SO*(mu0_P + mu0_N)`; `RDQ18` is identically zero (no strain-rate feedback).
+  `a_XB*frac_SO*(mu0_P + mu0_N)`; the strain-moment models (`Tewari2016`, `Marzban2020`) use
+  `SL0*OV_thick*kstiff1*(p2_0 + p3_0)`; `RDQ18` is identically zero (no strain-rate feedback).
   **Never hand-check a new `Ka` by eye** — `tests/test_active_stiffness.py` verifies it by finite
   difference against the model's own dynamics, which is the only thing that keeps it honest when
   the ODEs change later.
@@ -55,10 +56,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   length held over the step, and the Land family sub-steps at its own `_TARGET_SUBSTEP`. Until
   RDQ20MF did, a longer call took one Euler step of that length and advanced the crossbridges on
   every 40th call whatever its length, so a coupled solver stepping at 1 ms got no tension for
-  40 ms; the long-step tests in `tests/test_rdq20mf.py` pin the fix. RDQ20MF refreshes its
+  40 ms; the long-step tests in `tests/test_rdq20mf.py` pin the fix. `Tewari2016` and `Marzban2020`
+  sub-step at their own `_TARGET_SUBSTEP` (0.1 / 0.2 ms), each sub-step an exact matrix exponential
+  of their linear system with the nonlinear terms frozen (Tewari2016) or linearized (Marzban2020,
+  whose thin filament relaxes in ~0.1 ms) about a predicted midpoint; both are second order. RDQ20MF refreshes its
   Ca-dependent rates every `freq_rates_update` (10) sub-steps and advances its crossbridges every
   `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
-- Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`) is self-contained and
+- Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
+  `marzban2020.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
   `advance_step` is the portable cross-model entry point; some models also keep an original,
   more detailed entry point (e.g. `RDQ18.advance_ODE`).
@@ -82,8 +87,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   ever diverge. `tests/test_linalg.py` also pins the
   invariant that makes batching legitimate: a matrix alone and the same matrix inside a mixed-norm
   batch of thousands come back bit-identical.
-- **`.ode` files.** `src/crossbridge/land2017.ode`, `lewalle2024.ode` and `rdq20mf.ode` (package
-  data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
+- **`.ode` files.** `src/crossbridge/land2017.ode`, `lewalle2024.ode`, `rdq20mf.ode`, `tewari2016.ode`
+  and `marzban2020.ode` (package data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
   (C, Julia, UFL) and a caller can supply their inputs from another model. Each class points at
   its file through `ODE_FILE` (`ClassVar[Path | None]` on `CardiacActivationModel`: `None` there and
   on `RDQ18`). RDQ18 has none on purpose: its 2176 states are 64 families over 34 neighbouring
@@ -92,7 +97,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   "The models as `.ode` files"): crossbridge's units (s, µM, µm; outputs in kPa); a component
   `inputs` holding the parameters `Ca` [µM], `SL` [µm] and `dSL` [µm/s], so
   `ode - ode.get_component("inputs")` leaves exactly those three missing; the intermediates `Ta`,
-  `Ka` (per unit Λ) and `bound_ca`, plus `Tp` for Land2017 and Lewalle2024; every other parameter
+  `Ka` (per unit Λ) and `bound_ca`, plus `Tp` for Land2017, Lewalle2024, Tewari2016 and Marzban2020; every other parameter
   named and defaulted as in `default_parameters()`, minus the non-ODE keys `dt`, `Ca0`, `dt_RU`;
   initial states those of `reset()`, a computed one written as a number with its formula in a
   comment; `Min`/`Max` where the class uses `np.minimum`/`np.maximum`. Lewalle2024's string
@@ -117,7 +122,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   the file is not the cause: the reference agrees across Radau, LSODA and BDF, and the class's
   error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
   the same way.
-  The Lewalle2024 cases take ~105 s, most of the suite's ~190 s.
+  The Lewalle2024 cases take ~105 s of the suite's ~240 s, the Tewari2016 and Marzban2020 ones ~80 s. They are
+  compared by trajectory over `MOMENT_PROTOCOLS` and off their defaults (bound 1e-4, no exceptions),
+  and by derivatives at random states that reach the branches no trajectory does (the `f(sigma)`
+  floor, zero overlap); for them the class's linear system at a state *is* the right-hand side.
 - **`rdq20mf.ode` is written by `tools/generate_rdq20mf_ode.py`** — change the generator and
   re-run it (`python3 tools/generate_rdq20mf_ode.py`), never edit the file;
   `tests/test_rdq20mf_ode_generator.py` fails if the two differ. States: `x_{a}{b}{c}{B}` is
@@ -130,14 +138,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   the suite passes without it, with those tests skipped; `tests/test_ode_file_attribute.py` and
   the generator test need no gotranx.
 - `Ta_max` semantics differ by model: `RDQ18` uses it directly
-  (`Ta_max * compute_permissivity()`); `RDQ20MF`, `Land2017`, `Lewalle2024` compute tension
-  intrinsically from their own params (`a_XB`/`Tref`) and only accept `Ta_max` for interface
+  (`Ta_max * compute_permissivity()`); the others compute tension
+  intrinsically from their own params (`a_XB`/`Tref`/`kstiff1`,`kstiff2`) and only accept `Ta_max` for interface
   compatibility — check which applies before relying on it.
 - `Land2017` is the un-amended base model; `Lewalle2024` extends it by replacing its ad hoc
   `beta0`/`beta1` length-dependent activation with explicit myosin OFF-state feedback.
+- `Tewari2016` (rat; strain-moment crossbridges, metabolites, temperature, Rice activation) and
+  `Marzban2020` (its extension: Campbell 2018's cooperative thin filament and force-recruited myosin
+  OFF state) are reconstructions: the 2016 code was never published, and Table B.1 only reproduces
+  the paper's Table E.1 with *all* its rates read at 17 °C (`T_ref_act`), not the `(T - 37.5)/10` the
+  paper prints. Marzban2020 follows the curated MATLAB code where it disagrees with the paper's
+  Table 7 (`K_coop`, `k_off`), and defaults Pi to 1.0 mM, at which it reproduces the paper's Fig. 3.
+  Each module docstring lists what reproduces and what does not; keep those claims in step with
+  `tests/test_tewari2016.py` and `tests/test_marzban2020.py`, which pin them. Their large length
+  steps (e.g. a 20% slack) break the second-order moment closure itself (it grows without bound
+  past ~440 um/s), so protocols like Ktr detach crossbridges via `get_state`/`set_state` instead.
 - `src/crossbridge/utils.py`: synthetic `calcium_trace()`/`sl_trace()` generators for tests/demos,
-  not physiological data.
-- `new_models/` (paper PDFs + reference ports) and root `main.py` are reference/scratch material,
+  not physiological data; and `janssen_calcium(t, frequency)`, Marzban et al.'s fits to measured rat
+  calcium transients at 2-10 Hz, which drive the Tewari2016/Marzban2020 demos and tests.
+- `new_models/` and `beard-model/` (paper PDFs + reference ports; `beard-model/Rat-Cardiac-Energetic`
+  is the curated MATLAB code of Marzban2020) and root `main.py` are reference/scratch material,
   not part of the installable package (`tool.setuptools.packages.find` only picks up `src/`) —
   treat `new_models/` as read-only ground truth when checking a port's numerics.
 
