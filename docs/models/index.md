@@ -15,6 +15,8 @@ code changes.
   length-dependent activation with explicit myosin OFF-state force feedback.
 - **[Tewari2016](tewari2016.md)** — a rat model with a strain-dependent, metabolite-sensitive
   crossbridge cycle (moments of the strain distributions) under Rice et al.'s calcium activation.
+- **[Marzban2020](marzban2020.md)** — an extension of Tewari2016 with a cooperative thin filament
+  and a myosin OFF state from which force recruits heads.
 
 
 (choosing-a-model)=
@@ -44,6 +46,7 @@ you want to be able to swap models.
 | `Land2017`    | Troponin/crossbridge state populations         | **Unused** — tension is computed from `params["Tref"]` instead   | up to ~1e-3 s (adaptive internal sub-stepping) |
 | `Lewalle2024` | Land2017 state populations + OFF-state feedback| **Unused** — tension is computed from `params["Tref"]` instead   | up to ~1e-3 s (adaptive internal sub-stepping) |
 | `Tewari2016`  | Troponin, thin filament + moments of the crossbridge strain distributions | **Unused** — tension is computed from `params["kstiff1"]`, `params["kstiff2"]` | any (internal sub-steps of 0.1 ms) |
+| `Marzban2020` | Thin filament, myosin OFF state + crossbridge moments | **Unused** — tension is computed from `params["kstiff1"]`, `params["kstiff2"]` | any (internal sub-steps of 0.2 ms) |
 
 Only `RDQ18` scales tension via the constructor's `Ta_max` argument; the other models compute
 tension intrinsically from their own parameter set (`a_XB`, `Tref`, `kstiff1`/`kstiff2`) and
@@ -56,7 +59,7 @@ runtime via the small registry in `crossbridge`:
 ```python
 from crossbridge import get_model
 
-ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024", "Tewari2016"
+ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024", "Tewari2016", "Marzban2020"
 sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
 ```
 
@@ -142,7 +145,7 @@ Two details worth knowing:
 (ode-files)=
 ## The models as `.ode` files
 
-`Land2017`, `Lewalle2024`, `RDQ20MF` and `Tewari2016` are also written as
+`Land2017`, `Lewalle2024`, `RDQ20MF`, `Tewari2016` and `Marzban2020` are also written as
 [gotranx](https://github.com/finsberg/gotranx) `.ode` files, which ship with the package. gotranx
 generates Python, C, Julia or UFL code from an `.ode` file, so a model can run outside NumPy. With
 its `inputs` component removed (below), a model takes its inputs from other code, such as a cell
@@ -171,14 +174,14 @@ Every file follows the same contract:
 
 - **Units** are the classes': time in s, calcium in µM, length in µm. The outputs are in kPa.
   Land2017 and Lewalle2024 keep their stress parameters (`a`, `Tref`) in Pa, as the classes do.
-  Tewari2016 has its metabolite concentrations in mM.
+  Tewari2016 and Marzban2020 have their metabolite concentrations in mM.
 - **Inputs.** A component named `inputs` holds three parameters: `Ca` [µM], `SL` [µm] and `dSL`
   [µm/s]. In the file alone they are parameters, held over a step as `advance_step` holds them.
   Subtracting the component leaves exactly these three as missing variables, which a cell model
   or a tissue model then supplies.
 - **Outputs** are intermediates: `Ta` [kPa], `Ka` [kPa per unit $\Lambda = SL/SL_0$] and
   `bound_ca` [fraction], the values of `get_active_tension()`, `get_active_stiffness()` and
-  `bound_calcium_fraction()`. Land2017, Lewalle2024 and Tewari2016 also have `Tp`
+  `bound_calcium_fraction()`. Land2017, Lewalle2024, Tewari2016 and Marzban2020 also have `Tp`
   [kPa], the value of `get_passive_tension()`.
 - **Parameters** have the names and defaults of `default_parameters()`, without the keys that set
   up the class's integrator or its initial state: `dt`, `Ca0` and `dt_RU`.

@@ -39,6 +39,12 @@ tewari2016
 .. automodule:: crossbridge.tewari2016
     :members:
 
+marzban2020
+-----------
+
+.. automodule:: crossbridge.marzban2020
+    :members:
+
 utils
 -----
 
