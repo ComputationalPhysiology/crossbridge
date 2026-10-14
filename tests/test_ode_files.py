@@ -13,19 +13,20 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import RDQ20MF, Land2017, Lewalle2024, Marzban2020, Tewari2016
+from crossbridge import RDQ20MF, Land2017, Lewalle2024, Marzban2020, Musgrave2025, Tewari2016
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016, Marzban2020]
+WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016, Marzban2020, Musgrave2025]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
     RDQ20MF: ("Ta", "Ka", "bound_ca"),
     Tewari2016: ("Ta", "Ka", "bound_ca", "Tp"),
     Marzban2020: ("Ta", "Ka", "bound_ca", "Tp"),
+    Musgrave2025: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
@@ -174,6 +175,24 @@ def test_initial_states_match_reset(cls):
     model, ode = cls(1), _load(cls)
     for state in ode.states:
         assert float(state.value) == pytest.approx(_state_of(model, state.name), rel=1e-15, abs=0)
+
+
+@pytest.mark.parametrize("cls", WITH_ODE)
+def test_singularity_removal_changes_nothing(cls):
+    """
+    gotranx (2.5) replaces what it takes for a removable singularity by its limit over a
+    window of up to 0.1, by default, with no error: it read Musgrave2025's B_xB / B as one
+    (B_xB starts at zero) and set the mean strain to zero for |B| < 0.1. Whatever a file
+    divides by must not look like one, so code generated from it is the model as written.
+    """
+    import inspect
+
+    if "remove_singularities" not in inspect.signature(gotranx.load_ode).parameters:
+        pytest.skip("this gotranx does not remove singularities")
+    fmt = gotranx.codegen.python.Format.none
+    removed = gotranx.cli.gotran2py.get_code(_load(cls), format=fmt)
+    kept = gotranx.load_ode(cls.ODE_FILE, remove_singularities=False)
+    assert removed == gotranx.cli.gotran2py.get_code(kept, format=fmt)
 
 
 PROTOCOLS = {  # SL(t) [um]; dSL is its forward difference over the step
@@ -444,9 +463,11 @@ def test_rdq20mf_derivatives_match_its_ode():
         )
 
 
-#: SL(t) [um] for the moment models, Tewari2016 and Marzban2020: titin on both sides of
-#: SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and relengthening,
-#: and a stretch and a release at peak tension (t = 60-70 ms under `_inputs(..., cmax=3.0)`).
+#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025: titin on
+#: both sides of SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and
+#: relengthening, and a stretch and a release at peak tension (t = 60-70 ms under
+#: `_inputs(..., cmax=3.0)`). For Musgrave2025, below_rest leaves no head in reach, and
+#: those starting at 2.0 um start (from rest at 2.2) with A clamped at zero.
 MOMENT_PROTOCOLS = {
     "isometric": lambda t: np.full_like(t, 2.2),
     "below_rest": lambda t: np.full_like(t, 1.8),
@@ -458,7 +479,7 @@ MOMENT_PROTOCOLS = {
 
 
 @pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
-@pytest.mark.parametrize("cls", [Tewari2016, Marzban2020])
+@pytest.mark.parametrize("cls", [Tewari2016, Marzban2020, Musgrave2025])
 def test_moment_models_match_their_ode(cls, protocol):
     Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
     errors = _trajectory_errors(cls, {}, {}, Ca, SL, dSL)
@@ -678,6 +699,133 @@ def test_marzban2020_derivatives_match_its_ode():
         np.testing.assert_allclose(
             monitors[ns["monitor_index"](out)],
             getattr(model, GETTERS[out])(),
+            rtol=1e-12,
+            atol=1e-13,
+            err_msg=out,
+        )
+
+
+@pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
+def test_musgrave2025_matches_its_ode_with_diabetic_parameters(protocol):
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
+    params = Musgrave2025.diabetic_parameters()
+    ode_params = {key: value for key, value in params.items() if key not in NON_ODE}
+    errors = _trajectory_errors(Musgrave2025, params, ode_params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_musgrave2025_matches_its_ode_through_its_clamp():
+    """
+    From rest at 2.2 um, held at 2.0 um, fewer heads are in reach than N holds: A starts
+    clamped at zero (asserted) and comes off the clamp as calcium rises (asserted), in the
+    middle of a sub-step, which the class splits there.
+    """
+    Ca, SL, dSL = _inputs(lambda t: np.full_like(t, 2.0), cmax=3.0)
+    free: list[float] = []
+    errors = _trajectory_errors(
+        Musgrave2025,
+        {},
+        {},
+        Ca,
+        SL,
+        dSL,
+        observe=lambda m: free.append(float(m._free(m._get_x(), m._z(m._SL_curr))[0])),
+    )
+    assert free[0] < 0.0 < max(free), (free[0], max(free))
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Musgrave2025's parameters off their defaults, no two of them equal.
+MUSGRAVE_OFF_DEFAULTS = {
+    "SL0": 2.15,
+    "MgATP": 3.0,
+    "MgADP": 0.05,
+    "Pi": 2.5,
+    "dG_ATP0": -31.0,
+    "T": 305.0,
+    "Ca50": 0.36,
+    "k_tn": 90.0,
+    "n_tn": 2.2,
+    "k0": 950.0,
+    "km0": 340.0,
+    "nTm": 4.6,
+    "k1": 80.0,
+    "km1": 7.4,
+    "k2": 93.0,
+    "km2": 105.0,
+    "k3": 101.0,
+    "phi_s1": 230.0,
+    "phi_s3": 52.0,
+    "kd_ATP": 0.33,
+    "phi_v": 0.032,
+    "phi_l": 4.7,
+    "L_max": 2.32,
+    "xC0": 0.011,
+    "rho_myo": 0.38,
+    "K_myo": 26000.0,
+    "Kp1": 12.6,
+    "mu": 0.074,
+    "Kp2": 0.55,
+    "phi_p": 7.5,
+    "L_r": 1.84,
+}
+
+
+def test_musgrave2025_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    params = MUSGRAVE_OFF_DEFAULTS
+    errors = _trajectory_errors(Musgrave2025, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_musgrave2025_derivatives_match_its_ode():
+    """
+    The class's linear system, with its rates taken at the state, is the right-hand side
+    the file must have for N, B, C and the strain moments. Compared at 60 random states,
+    among them cells that reach branches the trajectories do not: A clamped and not
+    (asserted), CaTn at and below its floor, B and C at and below the 1e-12 under which a
+    mean strain is that of new bridges, and SL past L_max. The outputs, and J_ATP against
+    `get_atp_hydrolysis_rate`, are compared too.
+    """
+    rng = np.random.default_rng(3)
+    n = 60
+    model = Musgrave2025(n)
+    model.CaTn = rng.uniform(size=n)
+    model.CaTn[:3] = [0.0, 1e-5, 1e-3]
+    model.N = rng.uniform(0.0, 0.8, n)
+    model.B, model.C = rng.uniform(0.0, 0.2, n), rng.uniform(0.0, 0.2, n)
+    model.B[3:5] = model.C[5:7] = [0.0, 1e-13]
+    model.B_xB = model.B * rng.normal(scale=2e-3, size=n)
+    model.C_xC = model.C * (model.p["xC0"] + rng.normal(scale=2e-3, size=n))
+    model.Fp1 = rng.normal(scale=2.0, size=n)
+    SL = rng.uniform(1.7, 2.4, n)
+    SL[7:9] = [2.3, 2.35]
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    Z = model._z(SL)
+    clamped = model._free(x, Z) <= 0.0
+    assert np.any(clamped) and np.any(~clamped)
+    M = model._system(x, model.CaTn, Z, dSL)
+    expected = (M @ np.vstack([x, np.ones(n)]).T[:, :, None])[:, :, 0].T
+
+    ns = _module(Musgrave2025)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    for row, name in enumerate(("N", "B", "C", "B_xB", "C_xC")):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+        )
+    getters = {**{out: GETTERS[out] for out in OUTPUTS[Musgrave2025]}}
+    getters["J_ATP"] = "get_atp_hydrolysis_rate"
+    for out, method in getters.items():
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, method)(),
             rtol=1e-12,
             atol=1e-13,
             err_msg=out,

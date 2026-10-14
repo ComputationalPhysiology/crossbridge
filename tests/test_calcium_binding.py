@@ -196,6 +196,12 @@ def test_zero_before_first_step_and_after_reset(name, ModelClass):
     np.testing.assert_array_equal(model.get_calcium_binding_rate(), np.zeros(N_CELLS))
 
 
+#: Calcium [uM] to step up to where 10 uM is too much for `_nudge`: Musgrave2025's
+#: troponin (Ca50 0.33 uM, Hill coefficient 2) re-equilibrates at 10 uM at
+#: k_tn (1 + (Ca / Ca50)^2) = 9.2e4 /s, so within the first of its two steps.
+RAISED_CA = {"Musgrave2025": 1.0}
+
+
 @pytest.mark.parametrize("name,ModelClass", sorted(MODEL_REGISTRY.items()))
 def test_binding_rate_follows_calcium(name, ModelClass):
     """Raising calcium must drive binding up; letting it fall must release."""
@@ -205,7 +211,7 @@ def test_binding_rate_follows_calcium(name, ModelClass):
     # Note the rate is checked right after the change, not after holding --
     # once the model re-equilibrates the rate correctly returns to zero.
     _hold(model, Ca=0.1)
-    _nudge(model, Ca=10.0)
+    _nudge(model, Ca=RAISED_CA.get(name, 10.0))
     assert np.all(model.get_calcium_binding_rate() > 0.0), f"{name}: not binding when Ca rises"
 
     # Equilibrate high, then drop calcium: the model must release.
