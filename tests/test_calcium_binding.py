@@ -259,6 +259,11 @@ def test_rdq20mf_occupancy_is_a_marginal_of_the_ru_tensor():
     assert np.all(model.bound_calcium_fraction() <= total + 1e-12)
 
 
+#: Calcium [uM] that saturates a model's binding sites, where 100 uM does not:
+#: Tewari2016's low-affinity troponin C has a K_d of about 31 uM at 37.5 degC.
+SATURATING_CA = {"Tewari2016": 1e4}
+
+
 @pytest.mark.parametrize("name,ModelClass", sorted(MODEL_REGISTRY.items()))
 def test_occupancy_saturates_with_calcium(name, ModelClass):
     """Occupancy must span the full range as calcium does.
@@ -271,7 +276,7 @@ def test_occupancy_saturates_with_calcium(name, ModelClass):
     RDQ20MF), because tropomyosin kinetics limit it. So this separates them.
     """
     saturated = ModelClass(num_cells=N_CELLS)
-    _hold(saturated, Ca=100.0, duration=0.2)
+    _hold(saturated, Ca=SATURATING_CA.get(name, 100.0), duration=0.2)
     assert np.all(saturated.bound_calcium_fraction() > 0.99), (
         f"{name}: occupancy failed to saturate at high calcium: "
         f"{saturated.bound_calcium_fraction()}"

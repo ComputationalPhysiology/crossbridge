@@ -1,0 +1,172 @@
+# Tewari et al. (2016) rat cardiac myofilament model, as crossbridge.Tewari2016 implements it
+# (Tewari et al., J Mol Cell Cardiol 94:162-175, https://doi.org/10.1016/j.yjmcc.2016.04.003,
+# with the crossbridge moment equations of J Mol Cell Cardiol 96:11-25,
+# https://doi.org/10.1016/j.yjmcc.2015.02.006). Loaded through Tewari2016.ODE_FILE;
+# tests/test_ode_files.py pins it to the class.
+#
+# Units: s, uM, um, mM (metabolites), degC; Ta, Tp and Ka in kPa (Ka per unit Lambda).
+# Crossbridge strain is measured in sarcomere length and advances with dSL.
+#
+# The contract: the component `inputs` holds Ca, SL and dSL. Standalone they are
+# parameters, set before each step (zero-order hold, like advance_step). Subtracting
+# the component turns them into missing variables, the seam to an EP or tissue model.
+# The outputs are the intermediates Ta, Ka, bound_ca and Tp.
+
+parameters("inputs",
+Ca = ScalarParam(0.1, unit="uM", description="cytosolic calcium"),
+SL = ScalarParam(1.9, unit="um", description="sarcomere length"),
+dSL = ScalarParam(0.0, unit="um/s", description="sarcomere length rate")
+)
+
+parameters("conditions",
+SL0 = ScalarParam(1.9, unit="um"),
+T = ScalarParam(37.5, unit="degC"),
+T_ref = ScalarParam(17.0, unit="degC"),
+T_ref_act = ScalarParam(17.0, unit="degC"),
+MgATP = ScalarParam(8.0, unit="mM"),
+MgADP = ScalarParam(0.018, unit="mM"),
+Pi = ScalarParam(0.6, unit="mM"),
+K_MgATP = ScalarParam(0.4897, unit="mM"),
+K_MgADP = ScalarParam(0.194, unit="mM"),
+K_Pi = ScalarParam(4.0, unit="mM")
+)
+
+parameters("geometry",
+L_thick = ScalarParam(1.67, unit="um"),
+L_thin = ScalarParam(1.2, unit="um"),
+L_bare = ScalarParam(0.1, unit="um")
+)
+
+parameters("activation",
+kon = ScalarParam(100.0, unit="1/(uM*s)"),
+koffL = ScalarParam(4218.5, unit="1/s"),
+koffH = ScalarParam(156.5, unit="1/s"),
+zeta = 0.23,
+beta50 = 0.5,
+n_beta = 15.0,
+Q_kon = 1.5,
+Q_koff = 1.3,
+kNP = ScalarParam(329.2, unit="1/s"),
+kPN = ScalarParam(50.0, unit="1/s"),
+Q_kNP = 1.6,
+Q_kPN = 1.6
+)
+
+parameters("crossbridges",
+ka = ScalarParam(294.1, unit="1/s"),
+kd = ScalarParam(88.9, unit="1/s"),
+k1 = ScalarParam(10.2, unit="1/s"),
+km1 = ScalarParam(10.3, unit="1/s"),
+k2 = ScalarParam(88.6, unit="1/s"),
+km2 = ScalarParam(20.9, unit="1/s"),
+k3 = ScalarParam(35.6, unit="1/s"),
+alpha1 = ScalarParam(10.0, unit="1/um"),
+alpha2 = ScalarParam(9.0, unit="1/um"),
+alpha3 = ScalarParam(59.3, unit="1/um**2"),
+s3 = ScalarParam(0.0099, unit="um"),
+kstiff1 = ScalarParam(2827.1, unit="kPa/um"),
+kstiff2 = ScalarParam(51871.0, unit="kPa/um"),
+dr = ScalarParam(0.01, unit="um"),
+Q_XB1 = 3.82,
+Q_XB2 = 2.39,
+Q_XB3 = 6.73,
+Q_XB4 = 1.34,
+Q_XB5 = 1.44
+)
+
+parameters("passive",
+SL_rest = ScalarParam(1.9, unit="um"),
+PCon_titin = 0.002,
+PExp_titin = ScalarParam(10.0, unit="1/um"),
+PCon_collagen = 0.02,
+PExp_collagen = ScalarParam(70.0, unit="1/um"),
+SL_collagen = ScalarParam(2.25, unit="um"),
+sigma_pas = ScalarParam(7.0, unit="kPa")
+)
+
+# Troponin starts at its force-free steady state for Ca0 = 0.1 uM, at T = 37.5 degC:
+# kon_T Ca0 / (kon_T Ca0 + koff_T), kon_T = kon Q_kon^2.05, koff_T = koff Q_koff^2.05.
+states("troponin", CaL = 0.0031685959798902377, CaH = 0.07891985650045384)
+states("thin_filament", N = 1.0)
+states("crossbridges",
+p1_0 = 0.0, p1_1 = 0.0, p1_2 = 0.0,
+p2_0 = 0.0, p2_1 = 0.0, p2_2 = 0.0,
+p3_0 = 0.0, p3_1 = 0.0, p3_2 = 0.0
+)
+
+expressions("overlap")
+ov_z = Min(L_thick / 2.0, SL / 2.0)
+ov_m = Max(SL / 2.0 - (SL - L_thin), L_bare / 2.0)
+L_ov = Max(ov_z - ov_m, 0.0)
+OV_thick = 2.0 * L_ov / (L_thick - L_bare)
+OV_thin = L_ov / L_thin
+
+expressions("rates")
+q_xb = (T - T_ref) / 10.0
+q_act = (T - T_ref_act) / 10.0
+g_Pi = Pi / K_Pi
+g_ATP = MgATP / K_MgATP
+g_ADP = MgADP / K_MgADP
+ka_T = ka * Q_XB1 ** q_xb
+k1_T = k1 * Q_XB1 ** q_xb / (1.0 + g_Pi)
+kd_T = kd * Q_XB2 ** q_xb * g_Pi / (1.0 + g_Pi)
+km1_T = km1 * Q_XB2 ** q_xb
+k2_T = k2 * Q_XB3 ** q_xb
+k3_T = k3 * Q_XB3 ** q_xb * g_ATP / (1.0 + g_ATP + g_ADP)
+km2_T = km2 * g_ADP / (1.0 + g_ADP + g_ATP)
+kstiff1_T = kstiff1 * Q_XB4 ** q_xb
+kstiff2_T = kstiff2 * Q_XB5 ** q_xb
+kon_T = kon * Q_kon ** q_act
+koffL_T = koffL * Q_koff ** q_act
+koffH_T = koffH * Q_koff ** q_act
+kNP_T = kNP * Q_kNP ** q_act
+kPN_T = kPN * Q_kPN ** q_act
+
+expressions("force")
+F_XB = kstiff1_T * (p2_1 + p3_1) + kstiff2_T * dr * p3_0
+KA_den = k1_T * k2_T * k3_T + k2_T * k3_T * kd_T + k1_T * k2_T * ka_T + k1_T * k3_T * ka_T + k2_T * k3_T * ka_T + k3_T * km1_T * kd_T + k1_T * km2_T * ka_T + k3_T * km1_T * ka_T + km1_T * km2_T * kd_T + km1_T * km2_T * ka_T
+F_max = kstiff2_T * dr * k1_T * k2_T * ka_T / KA_den
+Ta = OV_thick * F_XB
+Ka = SL0 * OV_thick * kstiff1_T * (p2_0 + p3_0)
+J_ATP = k3_T * (p3_0 + alpha3 * (s3 * s3 * p3_0 + 2.0 * s3 * p3_1 + p3_2))
+
+expressions("troponin")
+Ca_safe = Max(Ca, 0.0)
+f_sigma = Max(1.0 - zeta * F_XB / F_max, 0.0)
+dCaL_dt = kon_T * Ca_safe * (1.0 - CaL) - f_sigma * koffL_T * CaL
+dCaH_dt = kon_T * Ca_safe * (1.0 - CaH) - f_sigma * koffH_T * CaH
+TrpReg = (1.0 - OV_thin) * CaL + OV_thin * CaH
+bound_ca = TrpReg
+
+expressions("thin_filament")
+TR_n = Max(TrpReg, 0.0) ** n_beta
+beta_NP = sqrt(TR_n / (TR_n + beta50 ** n_beta))
+beta_PN = 1.0 / Max(beta_NP, 0.01)
+P = 1.0 - N - p1_0 - p2_0 - p3_0
+dN_dt = -kNP_T * beta_NP * N + kPN_T * beta_PN * P
+
+expressions("crossbridges")
+v = dSL
+f1o = p1_0 - alpha1 * p1_1 + 0.5 * alpha1 * alpha1 * p1_2
+f1i = p1_1 - alpha1 * p1_2
+f0o = p2_0 + alpha1 * p2_1 + 0.5 * alpha1 * alpha1 * p2_2
+f0i = p2_1 + alpha1 * p2_2
+f2o = p2_0 - alpha2 * p2_1 + 0.5 * alpha2 * alpha2 * p2_2
+f2i = p2_1 - alpha2 * p2_2
+f3o = p3_0 + alpha3 * (s3 * s3 * p3_0 + 2.0 * s3 * p3_1 + p3_2)
+f3i = p3_1 + alpha3 * (s3 * s3 * p3_1 + 2.0 * s3 * p3_2)
+f3ii = p3_2 + alpha3 * s3 * s3 * p3_2
+dp1_0_dt = ka_T * P - kd_T * p1_0 - k1_T * f1o + km1_T * f0o
+dp1_1_dt = v * p1_0 - kd_T * p1_1 - k1_T * f1i + km1_T * f0i
+dp1_2_dt = 2.0 * v * p1_1 - kd_T * p1_2 - k1_T * p1_2 + km1_T * p2_2
+dp2_0_dt = k1_T * f1o - km1_T * f0o - k2_T * f2o + km2_T * p3_0
+dp2_1_dt = v * p2_0 + k1_T * f1i - km1_T * f0i - k2_T * f2i + km2_T * p3_1
+dp2_2_dt = 2.0 * v * p2_1 + k1_T * p1_2 - km1_T * p2_2 - k2_T * p2_2 + km2_T * p3_2
+dp3_0_dt = k2_T * f2o - km2_T * p3_0 - k3_T * f3o
+dp3_1_dt = v * p3_0 + k2_T * f2i - km2_T * p3_1 - k3_T * f3i
+dp3_2_dt = 2.0 * v * p3_1 + k2_T * p2_2 - km2_T * p3_2 - k3_T * f3ii
+
+expressions("passive")
+titin = Conditional(Ge(SL, SL_rest), PCon_titin * (exp(PExp_titin * (SL - SL_rest)) - 1.0), -PCon_titin * (exp(PExp_titin * (SL_rest - SL)) - 1.0))
+collagen = Conditional(Ge(SL, SL_collagen), PCon_collagen * (exp(PExp_collagen * (SL - SL_collagen)) - 1.0), 0.0)
+Tp = sigma_pas * (titin + collagen)

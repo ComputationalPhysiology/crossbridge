@@ -13,17 +13,18 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import RDQ20MF, Land2017, Lewalle2024
+from crossbridge import RDQ20MF, Land2017, Lewalle2024, Tewari2016
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF]
+WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
     RDQ20MF: ("Ta", "Ka", "bound_ca"),
+    Tewari2016: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
@@ -438,5 +439,132 @@ def test_rdq20mf_derivatives_match_its_ode():
             getattr(model, method)(),
             rtol=1e-12,
             atol=1e-15,
+            err_msg=out,
+        )
+
+
+#: SL(t) [um] for the strain-moment model Tewari2016: titin on both sides of
+#: SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and relengthening,
+#: and a stretch and a release at peak tension (t = 60-70 ms under `_inputs(..., cmax=3.0)`).
+MOMENT_PROTOCOLS = {
+    "isometric": lambda t: np.full_like(t, 2.2),
+    "below_rest": lambda t: np.full_like(t, 1.8),
+    "collagen": lambda t: np.full_like(t, 2.3),
+    "shorten_and_relengthen": PROTOCOLS["shorten_and_relengthen"],
+    "stretch_at_peak": lambda t: 2.0 + 0.2 * np.clip((t - 0.06) / 0.004, 0, 1),
+    "release_at_peak": lambda t: 2.0 - 0.25 * np.clip((t - 0.06) / 0.01, 0, 1),
+}
+
+
+@pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
+@pytest.mark.parametrize("cls", [Tewari2016])
+def test_moment_models_match_their_ode(cls, protocol):
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
+    errors = _trajectory_errors(cls, {}, {}, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Tewari2016's parameters off their defaults, no two of them equal, passed to the class
+#: and to the file alike: a swapped parameter, or one written as its default, shows.
+TEWARI_OFF_DEFAULTS = {
+    "T": 30.0,
+    "T_ref": 18.0,
+    "T_ref_act": 21.0,
+    "MgATP": 5.0,
+    "MgADP": 0.05,
+    "Pi": 1.5,
+    "K_MgATP": 0.52,
+    "K_MgADP": 0.21,
+    "K_Pi": 3.7,
+    "kon": 120.0,
+    "koffL": 3900.0,
+    "koffH": 171.0,
+    "zeta": 0.31,
+    "beta50": 0.47,
+    "n_beta": 13.0,
+    "Q_kon": 1.55,
+    "Q_koff": 1.27,
+    "kNP": 310.0,
+    "kPN": 57.0,
+    "Q_kNP": 1.63,
+    "Q_kPN": 1.58,
+    "ka": 320.0,
+    "kd": 81.0,
+    "k1": 11.5,
+    "km1": 9.4,
+    "k2": 95.0,
+    "km2": 24.0,
+    "k3": 33.0,
+    "alpha1": 11.0,
+    "alpha2": 8.2,
+    "alpha3": 52.0,
+    "s3": 0.0107,
+    "kstiff1": 2700.0,
+    "kstiff2": 49000.0,
+    "dr": 0.0093,
+    "Q_XB1": 3.6,
+    "Q_XB2": 2.2,
+    "Q_XB3": 6.1,
+    "Q_XB4": 1.29,
+    "Q_XB5": 1.41,
+}
+
+
+def test_tewari2016_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    params = TEWARI_OFF_DEFAULTS
+    errors = _trajectory_errors(Tewari2016, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_tewari2016_derivatives_match_its_ode():
+    """
+    The class's linear system, with its coefficients taken at the state, is the right-hand
+    side the file must have. Compared at 60 random states, among them cells that reach the
+    branches the trajectories above do not: F_XB past F_max / zeta (the floor of f), SL
+    below L_thin (the floor of the overlap), and SL on either side of SL_rest and of
+    SL_collagen; beta_NP falls either side of 0.01 (asserted).
+    """
+    rng = np.random.default_rng(1)
+    n = 60
+    model = Tewari2016(n)
+    model.CaL, model.CaH = rng.uniform(size=n), rng.uniform(size=n)
+    model.N = rng.uniform(0.0, 0.5, n)
+    for k in (1, 2, 3):
+        setattr(model, f"p{k}_0", rng.uniform(0.0, 0.15, n))
+        setattr(model, f"p{k}_1", rng.normal(scale=0.01, size=n))
+        setattr(model, f"p{k}_2", rng.uniform(0.0, 1e-3, n))
+    model.p2_1[:3] = model.p3_1[:3] = 0.3  # F_XB far past F_max / zeta
+    SL = rng.uniform(1.6, 2.4, n)
+    SL[3:7] = [1.0, 1.15, 1.9, 2.25]  # no overlap; SL_rest, SL_collagen
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    _, OV_thin = model._overlap(SL)
+    f, k_NP, k_PN = model._coefficients(x, OV_thin)
+    assert np.any(f == 0.0) and np.any(f > 0.0)
+    beta_NP = k_NP / model._kNP
+    assert np.any(beta_NP < 0.01) and np.any(beta_NP > 0.01)
+    M = model._system(Ca, dSL, f, k_NP, k_PN)
+    expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
+
+    ns = _module(Tewari2016)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    rows = ("CaL", "CaH", "N", *(f"p{k}_{order}" for k in (1, 2, 3) for order in (0, 1, 2)))
+    for row, name in enumerate(rows):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+        )
+    for out in OUTPUTS[Tewari2016]:
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, GETTERS[out])(),
+            rtol=1e-12,
+            atol=1e-13,
             err_msg=out,
         )
