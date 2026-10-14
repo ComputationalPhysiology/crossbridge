@@ -12,6 +12,7 @@ parts:
       - file: "docs/models/lewalle2024"
       - file: "docs/models/tewari2016"
       - file: "docs/models/marzban2020"
+      - file: "docs/models/musgrave2025"
 
   - caption: Examples
     chapters:
@@ -24,6 +25,7 @@ parts:
       - file: "demo/reproduce_figures_lewalle2024"
       - file: "demo/reproduce_figures_tewari2016"
       - file: "demo/reproduce_figures_marzban2020"
+      - file: "demo/reproduce_figures_musgrave2025"
       - file: "demo/compare_models"
 
   - caption: Python API

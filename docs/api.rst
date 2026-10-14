@@ -45,6 +45,12 @@ marzban2020
 .. automodule:: crossbridge.marzban2020
     :members:
 
+musgrave2025
+------------
+
+.. automodule:: crossbridge.musgrave2025
+    :members:
+
 utils
 -----
 
