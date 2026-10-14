@@ -1,0 +1,116 @@
+# Musgrave, Han, Ward, Taberner & Tran (2025) human atrial muscle model, non-diabetic
+# parameters, as crossbridge.Musgrave2025 implements it (J Physiol 604:5316-5341,
+# https://doi.org/10.1113/JP288463; Appendix A). Loaded through Musgrave2025.ODE_FILE;
+# tests/test_ode_files.py pins it to the class. The diabetic model is the same file with
+# Musgrave2025.diabetic_parameters().
+#
+# Units: s, uM, um, mM (metabolites), at 37 degC; Ta, Tp and Ka in kPa (Ka per unit
+# Lambda = SL / SL0). Crossbridge strain is measured in sarcomere length.
+#
+# The mean strains xB and xC of Eqs. (7)-(8) are carried as first moments, B_xB = B xB
+# and C_xC = C xC, whose equations are those times B and C plus xB dB/dt and xC dC/dt.
+# The same model where B, C > 0, and regular where they vanish, as at rest.
+#
+# The contract: the component `inputs` holds Ca, SL and dSL. Standalone they are
+# parameters, set before each step (zero-order hold, like advance_step). Subtracting
+# the component turns them into missing variables, the seam to an EP or tissue model.
+# The outputs are the intermediates Ta, Ka, bound_ca and Tp.
+
+parameters("inputs",
+Ca = ScalarParam(0.1, unit="uM", description="cytosolic calcium"),
+SL = ScalarParam(2.2, unit="um", description="sarcomere length"),
+dSL = ScalarParam(0.0, unit="um/s", description="sarcomere length rate")
+)
+
+parameters("conditions",
+SL0 = ScalarParam(2.2, unit="um"),
+MgATP = ScalarParam(5.0, unit="mM"),
+MgADP = ScalarParam(0.036, unit="mM"),
+Pi = ScalarParam(1.0, unit="mM"),
+dG_ATP0 = ScalarParam(-30.0, unit="kJ/mol"),
+T = ScalarParam(310.0, unit="K")
+)
+
+parameters("thin_filament",
+Ca50 = ScalarParam(0.33, unit="uM"),
+k_tn = ScalarParam(100.0, unit="1/s"),
+n_tn = 2.0,
+k0 = ScalarParam(1000.0, unit="1/s"),
+km0 = ScalarParam(327.0, unit="1/s"),
+nTm = 5.0
+)
+
+parameters("crossbridges",
+k1 = ScalarParam(88.97291545739041, unit="1/s"),
+km1 = ScalarParam(6.680703481685643, unit="1/(s*mM)"),
+k2 = ScalarParam(88.83117612580399, unit="1/s"),
+km2 = ScalarParam(112.58690705107963, unit="1/s"),
+k3 = ScalarParam(96.5554076707849, unit="1/s"),
+phi_s1 = ScalarParam(257.3553162449159, unit="1/um"),
+phi_s3 = ScalarParam(44.872912839341836, unit="1/um"),
+kd_ATP = ScalarParam(0.28138787414484157, unit="mM"),
+phi_v = 0.029359047319968586,
+phi_l = 4.99850622220351,
+L_max = ScalarParam(2.3, unit="um"),
+xC0 = ScalarParam(0.01, unit="um"),
+rho_myo = 0.361,
+K_myo = ScalarParam(27846.1292150285, unit="kPa/um")
+)
+
+parameters("passive",
+Kp1 = ScalarParam(13.299805644328579, unit="kPa/um"),
+mu = ScalarParam(0.06963919072646306, unit="kPa*s/um"),
+Kp2 = ScalarParam(0.5151627811248674, unit="kPa"),
+phi_p = ScalarParam(7.201953888948654, unit="1/um"),
+L_r = ScalarParam(1.87, unit="um")
+)
+
+# Quiescent crossbridges, as reset() sets them: none attached, CaTn in equilibrium at
+# Ca0 = 0.23 uM, CaTn = r / (1 + r) with r = (Ca0 / Ca50)^n_tn, and N in equilibrium
+# with A over the heads in reach, N = a / (a + b) Z(SL0) with a and b the A -> N and
+# N -> A rates of dN_dt.
+states("thin_filament", CaTn = 0.32694684796044504, N = 0.7738329710604609)
+states("crossbridges",
+B = 0.0,
+C = 0.0,
+B_xB = 0.0,
+C_xC = 0.0
+)
+states("passive", Fp1 = 0.0)
+
+expressions("thin_filament")
+Ca_safe = Max(Ca, 0.0)
+dCaTn_dt = k_tn * ((Ca_safe / Ca50) ** n_tn * (1.0 - CaTn) - CaTn)
+bound_ca = CaTn
+# CaTn^(-nTm/2) diverges as calcium goes to zero; floored as in the class
+CaTn_safe = Max(CaTn, 0.001)
+Z = Conditional(Lt(SL, L_max), 1.0 + phi_l * (SL / L_max - 1.0), 1.0)
+A = Max(Z - N - B - C, 0.0)
+dN_dt = km0 * CaTn_safe ** (-nTm / 2.0) * A - k0 * CaTn_safe ** (nTm / 2.0) * N
+
+expressions("crossbridges")
+# Mean strains; a state too sparse to define one takes that of its new bridges. The Max
+# is not redundant: given B_xB / B, gotranx (2.5) takes it for a removable singularity,
+# since B_xB starts at zero, and replaces it with zero for |B| < 0.1.
+xB = Conditional(Gt(B, 1e-12), B_xB / Max(B, 1e-12), 0.0)
+xC = Conditional(Gt(C, 1e-12), C_xC / Max(C, 1e-12), xC0)
+k1_x = k1 * exp(-phi_s1 * xB)
+e3 = exp(phi_s3 * (xC - xC0))
+km1_Pi = km1 * Pi
+km2_ATP = km2 * kd_ATP / (kd_ATP + MgATP)
+k3_x = k3 * MgATP / (kd_ATP + MgATP) * e3
+# Eqs. (13)-(14), k-3 = k1 k2 k3 / (k-1 k-2 exp(-dG_ATP / RT)), with Pi and ATP
+# cancelled (R = 8.314e-3 kJ/(mol K))
+km3_x = k1_x * k2 * k3 * e3 * MgADP / (1000.0 * km1 * km2 * kd_ATP * exp(-dG_ATP0 / (0.008314 * T)))
+dB_dt = k1_x * A - (km1_Pi + k2) * B + km2_ATP * C
+dC_dt = k2 * B - (km2_ATP + k3_x) * C + km3_x * A
+# Eq. (7) times B plus xB dB/dt, and Eq. (8) times C plus xC dC/dt
+dB_xB_dt = -(km1_Pi + k2) * B_xB + phi_v * dSL * B
+dC_xC_dt = -(km2_ATP + k3_x) * C_xC + xC0 * (k2 * B + km3_x * A) + phi_v * dSL * C
+Ta = rho_myo * K_myo * (B_xB + C_xC)
+Ka = SL0 * rho_myo * K_myo * phi_v * (B + C)
+J_ATP = k3_x * C - km3_x * A
+
+expressions("passive")
+dFp1_dt = Kp1 * (dSL - Fp1 / mu)
+Tp = Fp1 + Kp2 * (exp(phi_p * (SL - L_r)) - 1.0)

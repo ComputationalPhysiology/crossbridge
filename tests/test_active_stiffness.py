@@ -27,10 +27,24 @@ import copy
 import numpy as np
 import pytest
 
-from crossbridge import MODEL_REGISTRY, RDQ18, Land2017, Lewalle2024, RDQ20MF
+from crossbridge import (
+    MODEL_REGISTRY,
+    RDQ18,
+    Land2017,
+    Lewalle2024,
+    Marzban2020,
+    Musgrave2025,
+    RDQ20MF,
+    Tewari2016,
+)
 
 # Models with genuine strain-rate feedback, for which R&Q Eq. (42) is exact.
-VELOCITY_DEPENDENT = [Land2017, Lewalle2024]
+VELOCITY_DEPENDENT = [Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025]
+
+#: Step [s] of the finite difference below, where the default 1e-5 s is too long: the
+#: difference is first order in dt times the fastest rate, and Tewari2016's crossbridges
+#: cycle at up to ~4600 /s at 37.5 degC (1.3% at 1e-5 s, 0.13% at 1e-6 s).
+FD_DT = {Tewari2016: 1e-6}
 
 N_CELLS = 4
 CA_ACTIVE = 2.0  # [uM], well above the diastolic level -- drives S, W up
@@ -84,7 +98,7 @@ def test_matches_finite_difference(ModelClass):
     Ka = model.get_active_stiffness()
     assert np.all(Ka > 0.0), "test state is not activated; the check would be vacuous"
 
-    Ka_fd = _finite_difference_Ka(model, dt=1e-5)
+    Ka_fd = _finite_difference_Ka(model, dt=FD_DT.get(ModelClass, 1e-5))
 
     rel_err = np.abs(Ka_fd - Ka) / np.abs(Ka)
     assert np.all(rel_err < 1e-2), (

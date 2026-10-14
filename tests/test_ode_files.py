@@ -13,17 +13,20 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import RDQ20MF, Land2017, Lewalle2024
+from crossbridge import RDQ20MF, Land2017, Lewalle2024, Marzban2020, Musgrave2025, Tewari2016
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF]
+WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016, Marzban2020, Musgrave2025]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
     RDQ20MF: ("Ta", "Ka", "bound_ca"),
+    Tewari2016: ("Ta", "Ka", "bound_ca", "Tp"),
+    Marzban2020: ("Ta", "Ka", "bound_ca", "Tp"),
+    Musgrave2025: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
@@ -172,6 +175,24 @@ def test_initial_states_match_reset(cls):
     model, ode = cls(1), _load(cls)
     for state in ode.states:
         assert float(state.value) == pytest.approx(_state_of(model, state.name), rel=1e-15, abs=0)
+
+
+@pytest.mark.parametrize("cls", WITH_ODE)
+def test_singularity_removal_changes_nothing(cls):
+    """
+    gotranx (2.5) replaces what it takes for a removable singularity by its limit over a
+    window of up to 0.1, by default, with no error: it read Musgrave2025's B_xB / B as one
+    (B_xB starts at zero) and set the mean strain to zero for |B| < 0.1. Whatever a file
+    divides by must not look like one, so code generated from it is the model as written.
+    """
+    import inspect
+
+    if "remove_singularities" not in inspect.signature(gotranx.load_ode).parameters:
+        pytest.skip("this gotranx does not remove singularities")
+    fmt = gotranx.codegen.python.Format.none
+    removed = gotranx.cli.gotran2py.get_code(_load(cls), format=fmt)
+    kept = gotranx.load_ode(cls.ODE_FILE, remove_singularities=False)
+    assert removed == gotranx.cli.gotran2py.get_code(kept, format=fmt)
 
 
 PROTOCOLS = {  # SL(t) [um]; dSL is its forward difference over the step
@@ -438,5 +459,374 @@ def test_rdq20mf_derivatives_match_its_ode():
             getattr(model, method)(),
             rtol=1e-12,
             atol=1e-15,
+            err_msg=out,
+        )
+
+
+#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025: titin on
+#: both sides of SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and
+#: relengthening, and a stretch and a release at peak tension (t = 60-70 ms under
+#: `_inputs(..., cmax=3.0)`). For Musgrave2025, below_rest leaves no head in reach, and
+#: those starting at 2.0 um start (from rest at 2.2) with A clamped at zero.
+MOMENT_PROTOCOLS = {
+    "isometric": lambda t: np.full_like(t, 2.2),
+    "below_rest": lambda t: np.full_like(t, 1.8),
+    "collagen": lambda t: np.full_like(t, 2.3),
+    "shorten_and_relengthen": PROTOCOLS["shorten_and_relengthen"],
+    "stretch_at_peak": lambda t: 2.0 + 0.2 * np.clip((t - 0.06) / 0.004, 0, 1),
+    "release_at_peak": lambda t: 2.0 - 0.25 * np.clip((t - 0.06) / 0.01, 0, 1),
+}
+
+
+@pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
+@pytest.mark.parametrize("cls", [Tewari2016, Marzban2020, Musgrave2025])
+def test_moment_models_match_their_ode(cls, protocol):
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
+    errors = _trajectory_errors(cls, {}, {}, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Tewari2016's parameters off their defaults, no two of them equal, passed to the class
+#: and to the file alike: a swapped parameter, or one written as its default, shows.
+TEWARI_OFF_DEFAULTS = {
+    "T": 30.0,
+    "T_ref": 18.0,
+    "T_ref_act": 21.0,
+    "MgATP": 5.0,
+    "MgADP": 0.05,
+    "Pi": 1.5,
+    "K_MgATP": 0.52,
+    "K_MgADP": 0.21,
+    "K_Pi": 3.7,
+    "kon": 120.0,
+    "koffL": 3900.0,
+    "koffH": 171.0,
+    "zeta": 0.31,
+    "beta50": 0.47,
+    "n_beta": 13.0,
+    "Q_kon": 1.55,
+    "Q_koff": 1.27,
+    "kNP": 310.0,
+    "kPN": 57.0,
+    "Q_kNP": 1.63,
+    "Q_kPN": 1.58,
+    "ka": 320.0,
+    "kd": 81.0,
+    "k1": 11.5,
+    "km1": 9.4,
+    "k2": 95.0,
+    "km2": 24.0,
+    "k3": 33.0,
+    "alpha1": 11.0,
+    "alpha2": 8.2,
+    "alpha3": 52.0,
+    "s3": 0.0107,
+    "kstiff1": 2700.0,
+    "kstiff2": 49000.0,
+    "dr": 0.0093,
+    "Q_XB1": 3.6,
+    "Q_XB2": 2.2,
+    "Q_XB3": 6.1,
+    "Q_XB4": 1.29,
+    "Q_XB5": 1.41,
+}
+
+
+def test_tewari2016_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    params = TEWARI_OFF_DEFAULTS
+    errors = _trajectory_errors(Tewari2016, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_tewari2016_derivatives_match_its_ode():
+    """
+    The class's linear system, with its coefficients taken at the state, is the right-hand
+    side the file must have. Compared at 60 random states, among them cells that reach the
+    branches the trajectories above do not: F_XB past F_max / zeta (the floor of f), SL
+    below L_thin (the floor of the overlap), and SL on either side of SL_rest and of
+    SL_collagen; beta_NP falls either side of 0.01 (asserted).
+    """
+    rng = np.random.default_rng(1)
+    n = 60
+    model = Tewari2016(n)
+    model.CaL, model.CaH = rng.uniform(size=n), rng.uniform(size=n)
+    model.N = rng.uniform(0.0, 0.5, n)
+    for k in (1, 2, 3):
+        setattr(model, f"p{k}_0", rng.uniform(0.0, 0.15, n))
+        setattr(model, f"p{k}_1", rng.normal(scale=0.01, size=n))
+        setattr(model, f"p{k}_2", rng.uniform(0.0, 1e-3, n))
+    model.p2_1[:3] = model.p3_1[:3] = 0.3  # F_XB far past F_max / zeta
+    SL = rng.uniform(1.6, 2.4, n)
+    SL[3:7] = [1.0, 1.15, 1.9, 2.25]  # no overlap; SL_rest, SL_collagen
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    _, OV_thin = model._overlap(SL)
+    f, k_NP, k_PN = model._coefficients(x, OV_thin)
+    assert np.any(f == 0.0) and np.any(f > 0.0)
+    beta_NP = k_NP / model._kNP
+    assert np.any(beta_NP < 0.01) and np.any(beta_NP > 0.01)
+    M = model._system(Ca, dSL, f, k_NP, k_PN)
+    expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
+
+    ns = _module(Tewari2016)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    rows = ("CaL", "CaH", "N", *(f"p{k}_{order}" for k in (1, 2, 3) for order in (0, 1, 2)))
+    for row, name in enumerate(rows):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+        )
+    for out in OUTPUTS[Tewari2016]:
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, GETTERS[out])(),
+            rtol=1e-12,
+            atol=1e-13,
+            err_msg=out,
+        )
+
+
+def test_marzban2020_matches_its_ode_through_fast_shortening():
+    """
+    Shortening 0.3 um in 4 ms at peak tension compresses the attached crossbridges until
+    the active stress is about -20 kPa, past -1 / k_force, where the force-dependent
+    OFF -> ON rate is floored at zero. The test asserts the class gets there.
+    """
+    Ca, SL, dSL = _inputs(lambda t: 2.2 - 0.3 * np.clip((t - 0.06) / 0.004, 0, 1), cmax=3.0)
+    drive: list[float] = []
+    errors = _trajectory_errors(
+        Marzban2020,
+        {},
+        {},
+        Ca,
+        SL,
+        dSL,
+        observe=lambda m: drive.append(1.0 + m.p["k_force"] * m.get_active_tension()[0]),
+    )
+    assert min(drive) < 0.0, min(drive)
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Marzban2020's parameters off their defaults, no two of them equal.
+MARZBAN_OFF_DEFAULTS = {
+    "MgATP": 6.0,
+    "MgADP": 0.05,
+    "Pi": 1.8,
+    "K_MgATP": 0.52,
+    "K_MgADP": 0.21,
+    "K_Pi": 3.7,
+    "k_on": 95.0,
+    "k_off": 690.0,
+    "K_coop": 8.4,
+    "k_SR": 17.0,
+    "k_force": 1.31,
+    "k_mSR": 46.0,
+    "ka": 540.0,
+    "kd": 290.0,
+    "k1": 118.0,
+    "km1": 23.0,
+    "k2": 780.0,
+    "km2": 39.0,
+    "k3": 151.0,
+    "alpha1": 11.0,
+    "alpha2": 8.6,
+    "alpha3": 6.4,
+    "s3": 0.0107,
+    "kstiff1": 1690.0,
+    "kstiff2": 47000.0,
+    "dr": 0.0093,
+    "k_passive": 3.1,
+    "SL_rest_pas": 1.83,
+    "PCon_collagen": 0.0017,
+    "PExp_collagen": 64.0,
+    "SL_collagen": 2.21,
+}
+
+
+def test_marzban2020_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["collagen"], cmax=3.0)
+    params = MARZBAN_OFF_DEFAULTS
+    errors = _trajectory_errors(Marzban2020, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_marzban2020_derivatives_match_its_ode():
+    """
+    The class's system is the tangent of the right-hand side, so at the state it was
+    linearized about it equals the right-hand side itself. Compared at 60 random states,
+    with SL below L_thin (no overlap) and on SL_collagen, and the force-dependent
+    recruitment both floored and not (asserted).
+    """
+    rng = np.random.default_rng(2)
+    n = 60
+    model = Marzban2020(n)
+    model.N, model.U_NR = rng.uniform(0.0, 0.6, n), rng.uniform(size=n)
+    for k in (1, 2, 3):
+        setattr(model, f"p{k}_0", rng.uniform(0.0, 0.12, n))
+        setattr(model, f"p{k}_1", rng.normal(scale=0.01, size=n))
+        setattr(model, f"p{k}_2", rng.uniform(0.0, 1e-3, n))
+    model.p2_1[:3] = model.p3_1[:3] = -0.05  # compressed: sigma_XB < -1 / k_force
+    SL = rng.uniform(1.6, 2.4, n)
+    SL[3:6] = [1.0, 1.15, 2.25]
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    OV_thick = model._overlap(SL)
+    drive = 1.0 + model.p["k_force"] * model._sigma_xb(x, OV_thick)
+    assert np.any(drive < 0.0) and np.any(drive > 0.0)
+    M = model._system(x, Ca, dSL, OV_thick)
+    expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
+
+    ns = _module(Marzban2020)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    rows = ("N", "U_NR", *(f"p{k}_{order}" for k in (1, 2, 3) for order in (0, 1, 2)))
+    for row, name in enumerate(rows):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-11, atol=1e-11, err_msg=name
+        )
+    for out in OUTPUTS[Marzban2020]:
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, GETTERS[out])(),
+            rtol=1e-12,
+            atol=1e-13,
+            err_msg=out,
+        )
+
+
+@pytest.mark.parametrize("protocol", sorted(MOMENT_PROTOCOLS))
+def test_musgrave2025_matches_its_ode_with_diabetic_parameters(protocol):
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
+    params = Musgrave2025.diabetic_parameters()
+    ode_params = {key: value for key, value in params.items() if key not in NON_ODE}
+    errors = _trajectory_errors(Musgrave2025, params, ode_params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_musgrave2025_matches_its_ode_through_its_clamp():
+    """
+    From rest at 2.2 um, held at 2.0 um, fewer heads are in reach than N holds: A starts
+    clamped at zero (asserted) and comes off the clamp as calcium rises (asserted), in the
+    middle of a sub-step, which the class splits there.
+    """
+    Ca, SL, dSL = _inputs(lambda t: np.full_like(t, 2.0), cmax=3.0)
+    free: list[float] = []
+    errors = _trajectory_errors(
+        Musgrave2025,
+        {},
+        {},
+        Ca,
+        SL,
+        dSL,
+        observe=lambda m: free.append(float(m._free(m._get_x(), m._z(m._SL_curr))[0])),
+    )
+    assert free[0] < 0.0 < max(free), (free[0], max(free))
+    assert max(errors.values()) < 1e-4, errors
+
+
+#: Musgrave2025's parameters off their defaults, no two of them equal.
+MUSGRAVE_OFF_DEFAULTS = {
+    "SL0": 2.15,
+    "MgATP": 3.0,
+    "MgADP": 0.05,
+    "Pi": 2.5,
+    "dG_ATP0": -31.0,
+    "T": 305.0,
+    "Ca50": 0.36,
+    "k_tn": 90.0,
+    "n_tn": 2.2,
+    "k0": 950.0,
+    "km0": 340.0,
+    "nTm": 4.6,
+    "k1": 80.0,
+    "km1": 7.4,
+    "k2": 93.0,
+    "km2": 105.0,
+    "k3": 101.0,
+    "phi_s1": 230.0,
+    "phi_s3": 52.0,
+    "kd_ATP": 0.33,
+    "phi_v": 0.032,
+    "phi_l": 4.7,
+    "L_max": 2.32,
+    "xC0": 0.011,
+    "rho_myo": 0.38,
+    "K_myo": 26000.0,
+    "Kp1": 12.6,
+    "mu": 0.074,
+    "Kp2": 0.55,
+    "phi_p": 7.5,
+    "L_r": 1.84,
+}
+
+
+def test_musgrave2025_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    params = MUSGRAVE_OFF_DEFAULTS
+    errors = _trajectory_errors(Musgrave2025, params, params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_musgrave2025_derivatives_match_its_ode():
+    """
+    The class's linear system, with its rates taken at the state, is the right-hand side
+    the file must have for N, B, C and the strain moments. Compared at 60 random states,
+    among them cells that reach branches the trajectories do not: A clamped and not
+    (asserted), CaTn at and below its floor, B and C at and below the 1e-12 under which a
+    mean strain is that of new bridges, and SL past L_max. The outputs, and J_ATP against
+    `get_atp_hydrolysis_rate`, are compared too.
+    """
+    rng = np.random.default_rng(3)
+    n = 60
+    model = Musgrave2025(n)
+    model.CaTn = rng.uniform(size=n)
+    model.CaTn[:3] = [0.0, 1e-5, 1e-3]
+    model.N = rng.uniform(0.0, 0.8, n)
+    model.B, model.C = rng.uniform(0.0, 0.2, n), rng.uniform(0.0, 0.2, n)
+    model.B[3:5] = model.C[5:7] = [0.0, 1e-13]
+    model.B_xB = model.B * rng.normal(scale=2e-3, size=n)
+    model.C_xC = model.C * (model.p["xC0"] + rng.normal(scale=2e-3, size=n))
+    model.Fp1 = rng.normal(scale=2.0, size=n)
+    SL = rng.uniform(1.7, 2.4, n)
+    SL[7:9] = [2.3, 2.35]
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._SL_curr = SL
+
+    x = model._get_x()
+    Z = model._z(SL)
+    clamped = model._free(x, Z) <= 0.0
+    assert np.any(clamped) and np.any(~clamped)
+    M = model._system(x, model.CaTn, Z, dSL)
+    expected = (M @ np.vstack([x, np.ones(n)]).T[:, :, None])[:, :, 0].T
+
+    ns = _module(Musgrave2025)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    for row, name in enumerate(("N", "B", "C", "B_xB", "C_xC")):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+        )
+    getters = {**{out: GETTERS[out] for out in OUTPUTS[Musgrave2025]}}
+    getters["J_ATP"] = "get_atp_hydrolysis_rate"
+    for out, method in getters.items():
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, method)(),
+            rtol=1e-12,
+            atol=1e-13,
             err_msg=out,
         )

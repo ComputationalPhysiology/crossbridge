@@ -1,0 +1,136 @@
+# Marzban, Lopez & Beard (2020) rat cardiac myofilament model, as crossbridge.Marzban2020
+# implements it (Physiome, https://doi.org/10.36903/physiome.12964970; the cardiomyocyte
+# model of Lopez et al., Function 1:zqaa018, https://doi.org/10.1093/function/zqaa018).
+# Loaded through Marzban2020.ODE_FILE; tests/test_ode_files.py pins it to the class.
+#
+# Units: s, uM, um, mM (metabolites), at 37 degC; Ta, Tp and Ka in kPa (Ka per unit
+# Lambda). Crossbridge strain is measured in sarcomere length and advances with dSL.
+#
+# The contract: the component `inputs` holds Ca, SL and dSL. Standalone they are
+# parameters, set before each step (zero-order hold, like advance_step). Subtracting
+# the component turns them into missing variables, the seam to an EP or tissue model.
+# The outputs are the intermediates Ta, Ka, bound_ca and Tp.
+
+parameters("inputs",
+Ca = ScalarParam(0.1, unit="uM", description="cytosolic calcium"),
+SL = ScalarParam(1.9, unit="um", description="sarcomere length"),
+dSL = ScalarParam(0.0, unit="um/s", description="sarcomere length rate")
+)
+
+parameters("conditions",
+SL0 = ScalarParam(1.9, unit="um"),
+MgATP = ScalarParam(8.0, unit="mM"),
+MgADP = ScalarParam(0.018, unit="mM"),
+Pi = ScalarParam(1.0, unit="mM"),
+K_MgATP = ScalarParam(0.4897, unit="mM"),
+K_MgADP = ScalarParam(0.194, unit="mM"),
+K_Pi = ScalarParam(4.0, unit="mM")
+)
+
+parameters("geometry",
+L_thick = ScalarParam(1.67, unit="um"),
+L_thin = ScalarParam(1.2, unit="um"),
+L_bare = ScalarParam(0.1, unit="um")
+)
+
+parameters("activation",
+k_on = ScalarParam(101.185, unit="1/(uM*s)"),
+k_off = ScalarParam(723.852, unit="1/s"),
+K_coop = 9.6846
+)
+
+parameters("myosin_off_state",
+k_SR = ScalarParam(14.44, unit="1/s"),
+k_force = ScalarParam(1.169, unit="1/kPa"),
+k_mSR = ScalarParam(50.032, unit="1/s")
+)
+
+parameters("crossbridges",
+ka = ScalarParam(559.5568, unit="1/s"),
+kd = ScalarParam(304.6708, unit="1/s"),
+k1 = ScalarParam(112.3727, unit="1/s"),
+km1 = ScalarParam(21.296, unit="1/s"),
+k2 = ScalarParam(811.72, unit="1/s"),
+km2 = ScalarParam(43.25, unit="1/s"),
+k3 = ScalarParam(144.5586, unit="1/s"),
+alpha1 = ScalarParam(10.0, unit="1/um"),
+alpha2 = ScalarParam(9.1, unit="1/um"),
+alpha3 = ScalarParam(5.93, unit="1/um**2"),
+s3 = ScalarParam(0.0099, unit="um"),
+kstiff1 = ScalarParam(1735.1, unit="kPa/um"),
+kstiff2 = ScalarParam(45545.0, unit="kPa/um"),
+dr = ScalarParam(0.01, unit="um")
+)
+
+parameters("passive",
+k_passive = ScalarParam(3.3333333333333335, unit="kPa/um"),
+SL_rest_pas = ScalarParam(1.8, unit="um"),
+PCon_collagen = ScalarParam(0.0013333333333333333, unit="kPa"),
+PExp_collagen = ScalarParam(70.0, unit="1/um"),
+SL_collagen = ScalarParam(2.25, unit="um")
+)
+
+states("thin_filament", N = 1.0)
+# U_NR starts at its force-free steady state, k_SR / (k_SR + k_mSR).
+states("myosin_off_state", U_NR = 0.2239731976672044)
+states("crossbridges",
+p1_0 = 0.0, p1_1 = 0.0, p1_2 = 0.0,
+p2_0 = 0.0, p2_1 = 0.0, p2_2 = 0.0,
+p3_0 = 0.0, p3_1 = 0.0, p3_2 = 0.0
+)
+
+expressions("overlap")
+ov_z = Min(L_thick / 2.0, SL / 2.0)
+ov_m = Max(SL / 2.0 - (SL - L_thin), L_bare / 2.0)
+OV_thick = 2.0 * Max(ov_z - ov_m, 0.0) / (L_thick - L_bare)
+
+expressions("rates")
+g_Pi = Pi / K_Pi
+g_ATP = MgATP / K_MgATP
+g_ADP = MgADP / K_MgADP
+kd_eff = kd * g_Pi / (1.0 + g_Pi)
+k1_eff = k1 / (1.0 + g_Pi)
+km2_eff = km2 * g_ADP / (1.0 + g_ADP + g_ATP)
+k3_eff = k3 * g_ATP / (1.0 + g_ATP + g_ADP)
+
+expressions("force")
+sigma_XB = OV_thick * (kstiff2 * dr * p3_0 + kstiff1 * (p2_1 + p3_1))
+Ta = sigma_XB
+Ka = SL0 * OV_thick * kstiff1 * (p2_0 + p3_0)
+J_ATP = k3_eff * (p3_0 + alpha3 * (s3 * s3 * p3_0 + 2.0 * s3 * p3_1 + p3_2))
+
+expressions("thin_filament")
+Ca_safe = Max(Ca, 0.0)
+P = 1.0 - N - p1_0 - p2_0 - p3_0
+J_on = k_on * Ca_safe * N * (1.0 + K_coop * (1.0 - N))
+J_off = k_off * P * (1.0 + K_coop * N)
+dN_dt = -J_on + J_off
+bound_ca = 1.0 - N
+
+expressions("myosin_off_state")
+k_recruit = k_SR * Max(1.0 + k_force * sigma_XB, 0.0)
+dU_NR_dt = k_recruit * (1.0 - U_NR) - k_mSR * U_NR
+
+expressions("crossbridges")
+v = dSL
+f1o = p1_0 - alpha1 * p1_1 + 0.5 * alpha1 * alpha1 * p1_2
+f1i = p1_1 - alpha1 * p1_2
+f0o = p2_0 + alpha1 * p2_1 + 0.5 * alpha1 * alpha1 * p2_2
+f0i = p2_1 + alpha1 * p2_2
+f2o = p2_0 - alpha2 * p2_1 + 0.5 * alpha2 * alpha2 * p2_2
+f2i = p2_1 - alpha2 * p2_2
+f3o = p3_0 + alpha3 * (s3 * s3 * p3_0 + 2.0 * s3 * p3_1 + p3_2)
+f3i = p3_1 + alpha3 * (s3 * s3 * p3_1 + 2.0 * s3 * p3_2)
+dp1_0_dt = ka * P * U_NR * OV_thick - kd_eff * p1_0 - k1_eff * f1o + km1 * f0o
+dp1_1_dt = v * p1_0 - kd_eff * p1_1 - k1_eff * f1i + km1 * f0i
+dp1_2_dt = 2.0 * v * p1_1 - kd_eff * p1_2 - k1_eff * p1_2 + km1 * p2_2
+dp2_0_dt = k1_eff * f1o - km1 * f0o - k2 * f2o + km2_eff * p3_0
+dp2_1_dt = v * p2_0 + k1_eff * f1i - km1 * f0i - k2 * f2i + km2_eff * p3_1
+dp2_2_dt = 2.0 * v * p2_1 + k1_eff * p1_2 - km1 * p2_2 - k2 * p2_2 + km2_eff * p3_2
+dp3_0_dt = k2 * f2o - km2_eff * p3_0 - k3_eff * f3o
+dp3_1_dt = v * p3_0 + k2 * f2i - km2_eff * p3_1 - k3_eff * f3i
+dp3_2_dt = 2.0 * v * p3_1 + k2 * p2_2 - km2_eff * p3_2 - k3_eff * p3_2
+
+expressions("passive")
+collagen = Conditional(Gt(SL, SL_collagen), PCon_collagen * (exp(PExp_collagen * (SL - SL_collagen)) - 1.0), 0.0)
+Tp = k_passive * (SL - SL_rest_pas) / 2.0 + collagen
