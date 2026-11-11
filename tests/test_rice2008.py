@@ -371,17 +371,19 @@ def _sustained_stretch(v, dt_call):
     return np.array(out)
 
 
-def test_sustained_lengthening_is_valid_up_to_25_um_per_s():
+@pytest.mark.parametrize("v", [10.0, 20.0, 25.0])
+def test_sustained_lengthening_is_valid_up_to_25_um_per_s(v):
     """
     The class docstring's limit for sustained lengthening (4 ms ramps from peak, 22.5 degC):
-    at 25 um/s 1 ms calls are within 1e-3 of the peak of a reference at 1e-5 s calls (measured
-    9e-5), and that reference has converged (2e-5 s calls are within 3e-6 of it). At 28 um/s
-    the 1 ms calls are 7e-3 away and at 50 um/s the class does not converge at all, which is
-    why the limit is stated and `stretch_at_peak` is not compared with the .ode.
+    1 ms calls are within 1e-3 of the peak of a reference at 1e-5 s calls (measured 3.7e-4 at
+    10 um/s, 8.3e-4 at 20, 7.4e-5 at 25: not monotone), and that reference has converged
+    (2e-5 s calls are within 3.5e-5 of it, at most; asserted to 1e-4). Past 25 um/s the error
+    is 1.4e-3 at 27 um/s and 1.9e-2 at 30, and at 50 the class does not converge at all, which
+    is why the limit is stated and `stretch_at_peak` is not compared with the .ode.
     """
-    shipped = _sustained_stretch(25.0, 1e-3)
-    fine = _sustained_stretch(25.0, 2e-5)
-    finest = _sustained_stretch(25.0, 1e-5)
+    shipped = _sustained_stretch(v, 1e-3)
+    fine = _sustained_stretch(v, 2e-5)
+    finest = _sustained_stretch(v, 1e-5)
     peak = np.abs(finest).max(axis=0)
-    assert np.all(np.abs(fine - finest).max(axis=0) / peak < 1e-5)
+    assert np.all(np.abs(fine - finest).max(axis=0) / peak < 1e-4)
     assert np.all(np.abs(shipped - finest).max(axis=0) / peak < 1e-3)

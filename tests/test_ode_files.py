@@ -917,11 +917,12 @@ RICE_PROTOCOLS = {
 #: Bounds where Rice2008 is further than 1e-4 from the file at its shipped sub-steps, about 1.5
 #: times the error measured there (key: (parameters, protocol); every other case keeps 1e-4).
 #: The file is not the cause: Radau, BDF and LSODA (rtol 1e-11) agree on Ta of each of these
-#: protocols to 2e-10 of its peak or better, and the class's error falls at second order with its
-#: own sub-step: `release_at_peak` 1.9e-3 (largest output, Ka) at the shipped `_TARGET_SUBSTEP`
-#: of 1e-4 s, 3.9e-4 at 5e-5 and 8.2e-5 at 2.5e-5 (rabbit parameters 2.5e-3, 5.5e-4, 1.2e-4);
-#: the slow stretch 2.3e-4, 5.9e-5, 1.5e-5. What is left at the shipped step is the time
-#: sub-step of the relaxation after the movement stops (the worst calls have dSL = 0).
+#: protocols to 2e-10 of its peak or better, and the class's error falls with its own sub-step
+#: (`release_at_peak` 1.9e-3 (largest output, Ka) at the shipped `_TARGET_SUBSTEP` of 1e-4 s,
+#: 3.9e-4 at 5e-5 and 8.2e-5 at 2.5e-5; rabbit parameters 2.5e-3, 5.5e-4, 1.2e-4; the slow
+#: stretch 2.3e-4, 5.9e-5, 1.5e-5: second order) and with the velocity-driven sub-step count
+#: (`_STRAIN_PER_SUBSTEP` 0.2 instead of 0.35: 5.0e-4). At the shipped constants the release
+#: error is dominated by the release calls themselves (the worst are the first four, dSL = -25).
 RICE_BOUNDS = {
     ("default", "release_at_peak"): 2.8e-3,
     ("rabbit", "release_at_peak"): 3.7e-3,

@@ -99,9 +99,13 @@ and lengthening at up to 50 um/s -- in a *single* call; sustained lengthening
 is narrower, below. Sustained shortening is within 2e-3 of Radau for 10 ms
 ramps at 1 ms calls up to 100 um/s, and a release at 25 um/s from peak
 tension, then held, is within 3.5e-4 of the peak of Ta (1.9e-3 of Ka) at the
-shipped sub-step, 5.9e-4 and 2.5e-3 at 37 degC, the error being the time
-sub-step of the relaxation after the release, second order (a fifth of the
-sub-step gives 2e-5). The velocity-driven count is capped at
+shipped constants, and 5.9e-4 (2.5e-3) with ``rabbit_parameters()`` (37 degC).
+At the shipped constants that error is dominated by the release calls
+themselves (the worst are the first four, which take 11 sub-steps of
+0.09 ms), so it is governed by the velocity-driven sub-step count:
+``_STRAIN_PER_SUBSTEP`` of 0.2 instead of 0.35 gives 5.0e-4 (Ka), and
+``_TARGET_SUBSTEP`` of 2e-5 s instead of 1e-4 gives 5.1e-5. The
+velocity-driven count is capped at
 ``_MAX_STRAIN_SUBSTEPS`` (500) per call, which covers SL changing by
 500 x 0.35 x_0 = 1.2 um in one call, more than a sarcomere's working range;
 beyond it the sub-steps lengthen and the error grows without bound: the
@@ -114,11 +118,16 @@ verified range for a reason of the model's own: past a strain of a few
 (the class is then 1.3% from Radau at 22.5 degC). Further out the exponent
 cap binds, and the results, though finite, are no longer the model's.
 
-**Sustained lengthening is valid up to 25 um/s** (22.5 degC, 1 ms calls, 4 ms
-ramps from peak tension, held after): Ta is within 7.5e-5 of the peak of Radau
-at 25 um/s, 8.6e-4 at 27, 8.4e-3 at 28, and the class is wrong (no
-agreement at all) at 29 um/s and above. Beyond it the class does not converge
-to the model: for a 4 ms ramp at 50 um/s, Radau and BDF agree on Ta to 1e-9
+**Sustained lengthening is valid up to 25 um/s**, by the criterion of 1e-3 of
+the peak (22.5 degC, 4 ms ramps from peak tension at 1 ms calls, held after;
+the reference is the same class at 1e-5 s calls, which agrees with itself at
+2e-5 s to 3.5e-5 or better). The worst error over 5-25 um/s is 8.3e-4, of Ta at 20 um/s
+(5 um/s 7e-6, 10 3.7e-4, 15 6.9e-4, 22 1.4e-4, 25 7.4e-5, not monotone since
+the sub-step count steps with velocity); against Radau it is 8.4e-4 at
+20 um/s. Beyond 25 um/s it is not valid: 1.4e-3 at 27 and 1.9e-2 at 30
+(against Radau 8.6e-4, 5.6e-2), 8.4e-3 at 28 against Radau, and of the order
+of the peak at 29 and 50 um/s against Radau. Nor does the class converge to the
+model there: for a 4 ms ramp at 50 um/s, Radau and BDF agree on Ta to 1e-9
 while the class stays 0.80 of Ta away as its sub-step is cut from 1e-4 to
 5e-7 s, and LSODA fails. The scheme freezes the rates over a sub-step, but
 ``gxbT`` grows exponentially with a strain that the model slaves almost
