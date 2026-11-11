@@ -30,9 +30,12 @@ difference, and the tool asserts that they do:
 
 - the strain coefficients `xPsi D / (fappT (hbT + gxbT))` and `xPsi D / fappT` are algebraically
   the CellML's `xPsi / dutyprer` and `xPsi hfT / dutypostr`, equal to rounding (no mapping);
-- the file caps the exponents of `hfmd` and `gxbmd` at 40, which the CellML does not. The strains
-  are sampled where the arguments stay below it: `xXBprer >= -2.5 x_0`, `x_0 - xXBpostr <= 2 x_0`
-  (the `sigmap` branch) and `xXBpostr - x_0 <= 4 x_0` (the `sigman` branch);
+- the file caps the exponents of `hfmd` and `gxbmd` at `Rice2008`'s `_EXP_ARG_MAX` (20), which
+  the CellML does not (`tests/test_ode_files.py::test_rice2008_derivatives_match_its_ode` holds
+  the file's cap to the class's). The strains are sampled where the arguments, computed from the
+  file's `hfmdc`, `sigmap` and `sigman`, stay below it: `xXBprer >= -1.9 x_0` (18.05 at most),
+  `x_0 - xXBpostr <= 1.5 x_0` (the `sigmap` branch, 18) and `xXBpostr - x_0 <= 4 x_0` (the
+  `sigman` branch, 16), each branch and both signs of `xXBprer` sampled;
 - the file's `permtot` and `kp_nT` (`Max(Tropreg, 0)`, `Max(permtot, 0.01)`) equal the CellML's
   for `Tropreg > 0`, which the troponin samples guarantee;
 - the CellML's titin term divides by `|SL - SLrest|`, NaN at `SL == SLrest`, and its strains are
@@ -50,6 +53,8 @@ import numpy as np
 from gotranx.cli import gotran2py
 from gotranx.codegen.python import Format
 from gotranx.myokit import cellml_to_gotran
+
+from crossbridge.rice2008 import _EXP_ARG_MAX
 
 URL = (
     "https://models.physiomeproject.org/workspace/rice_wang_bers_detombe_2008/"
@@ -126,7 +131,8 @@ def main() -> int:
 
     # The file's own values for what the CellML disagrees on.
     base = mine["init_parameter_values"]()
-    value = {n: base[mine["parameter_index"](n)] for n in ("SLrest", "TmpC", "x_0")}
+    names = ("SLrest", "TmpC", "x_0", "hfmdc", "sigmap", "sigman")
+    value = {n: base[mine["parameter_index"](n)] for n in names}
 
     rng = np.random.default_rng(SEED)
     x_0 = value["x_0"]
@@ -145,18 +151,22 @@ def main() -> int:
         "TRPNCaH": rng.uniform(0.01, 0.99, NUM),
         "TRPNCaL": rng.uniform(0.01, 0.99, NUM),
         "N_NoXB": rng.uniform(0.0, 1.0, NUM),
-        "xXBprer": rng.uniform(-2.5 * x_0, 4.0 * x_0, NUM),
-        "xXBpostr": x_0 + rng.uniform(-2.0 * x_0, 4.0 * x_0, NUM),
+        "xXBprer": rng.uniform(-1.9 * x_0, 4.0 * x_0, NUM),
+        "xXBpostr": x_0 + rng.uniform(-1.5 * x_0, 4.0 * x_0, NUM),
     }
     states["P_NoXB"] = 1.0 - states["N_NoXB"]
 
-    # The caps of the file's exponents cannot bind, and the CellML's divisions are defined.
+    # The caps of the file's exponents cannot bind, on either branch of gxbmd, and the CellML's
+    # divisions are defined.
     xp, xq = states["xXBprer"], states["xXBpostr"]
-    assert np.all(5.0 * np.minimum(xp, 0.0) ** 2 / x_0**2 < 40.0), "hfmd argument reaches the cap"
-    assert np.all(8.0 * np.minimum(xq - x_0, 0.0) ** 2 / x_0**2 < 40.0), (
-        "gxbmd sigmap reaches the cap"
-    )
-    assert np.all(np.maximum(xq - x_0, 0.0) ** 2 / x_0**2 < 40.0), "gxbmd sigman reaches the cap"
+    hf_arg = -value["hfmdc"] * xp * np.abs(xp) / x_0**2
+    gxb_arg = ((xq - x_0) / x_0) ** 2
+    below = xq < x_0
+    assert np.any(xp < 0.0) and np.any(xp > 0.0), "xXBprer is not sampled on both sides of 0"
+    assert np.any(below) and np.any(~below), "xXBpostr is not sampled on both sides of x_0"
+    assert np.all(hf_arg < _EXP_ARG_MAX), "hfmd argument reaches the cap"
+    assert np.all(value["sigmap"] * gxb_arg[below] < _EXP_ARG_MAX), "gxbmd sigmap reaches the cap"
+    assert np.all(value["sigman"] * gxb_arg[~below] < _EXP_ARG_MAX), "gxbmd sigman reaches the cap"
     assert np.all(xp != 0.0) and np.all(xq != x_0)
 
     # The file: inputs are parameters.
