@@ -20,8 +20,8 @@ code changes.
 - **[Musgrave2025](musgrave2025.md)** — a human atrial model, non-diabetic and diabetic, with a
   strain-dependent, ATP- and Pi-sensitive crossbridge cycle under Land2017's thin filament.
 - **[Rice2008](rice2008.md)** — a rat model with a cooperative thin filament and strain-carrying
-  crossbridges, whose calcium activation Tewari2016 and Marzban2020 build on; its force is
-  normalized, so it is scaled by `Ta_max`.
+  crossbridges, whose calcium activation Tewari2016 takes over (Marzban2020 replaces it, keeping
+  only its collagen force); its force is normalized, so it is scaled by `Ta_max`.
 
 
 (choosing-a-model)=

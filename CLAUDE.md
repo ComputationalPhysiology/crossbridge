@@ -69,10 +69,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`_TARGET_SUBSTEP`, rates frozen at a predicted midpoint, second order) and more while the length
   moves fast: at most `_STRAIN_PER_SUBSTEP` = 0.35 `x_0` of strain per sub-step, capped at
   `_MAX_STRAIN_SUBSTEPS` (500) per call, each cell finishing at its own count so that its result
-  does not depend on its batch. It is verified for shortening up to 300 um/s per 1 ms call but for
-  **sustained lengthening only up to 25 um/s** (1e-3 of peak); beyond that the class does not
-  converge to the model (frozen rates cannot follow `gxbT`), and `tests/test_rice2008.py` pins the
-  limit. RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
+  does not depend on its batch. Each sub-step exponentiates its system as one dense 10x10 matrix,
+  and `expm_batch` scales a matrix with one exponent, so stiff strain coefficients overscale the
+  slow blocks; `_EXP_ARG_MAX` (20) caps the hfmd/gxbmd exponents to keep that norm moderate. At 40
+  the class sat 2.6x Ta's peak from Radau in a 50 um/s stretch at every sub-step from 1e-4 to
+  2e-6 s alike, so **judge its accuracy against Radau of its `.ode`, not by self-convergence**.
+  With 20 it converges to the model at every velocity measured (sustained lengthening at 1 ms
+  calls within 1.5e-3 of the peak at 5-300 um/s; `tests/test_rice2008.py` pins the worst cases).
+  RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
   advances its crossbridges every `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
   `marzban2020.py`, `musgrave2025.py`, `rice2008.py`) is self-contained and
@@ -141,20 +145,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
   the same way.
   The Lewalle2024 cases take ~105 s of the suite's ~390 s (without numba), the Tewari2016 and Marzban2020 ones ~80 s,
-  Musgrave2025's ~45 s, Rice2008's ~75 s (~50 s of it `tests/test_rice2008.py`'s paper tests). The moment models are compared by trajectory over `MOMENT_PROTOCOLS` and off
+  Musgrave2025's ~45 s, Rice2008's ~25 s, and `tests/test_rice2008.py` ~48 s more (~36 s of it the paper tests). The moment models are compared by trajectory over `MOMENT_PROTOCOLS` and off
   their defaults (bound 1e-4, no exceptions; Musgrave2025 also with `diabetic_parameters()` and
   through its clamp), and by derivatives at random states that reach the branches no trajectory
   does (the `f(sigma)` floor, zero overlap, the clamp, the CaTn floor); for them the class's linear
   system at a state *is* the right-hand side. Rice2008 is the same over `RICE_PROTOCOLS`
-  (`MOMENT_PROTOCOLS` without `stretch_at_peak`, plus a slow stretch), off its defaults
-  (`RICE_OFF_DEFAULTS`) and with `rabbit_parameters()`, with bounded exceptions in `RICE_BOUNDS`
-  (`release_at_peak` 2.8e-3 and 3.7e-3 with rabbit parameters, the slow stretch 3.4e-4: the class's
-  integrator, falling with its own sub-step, while Radau, BDF and LSODA agree to 2e-10). A 50 um/s
-  stretch is excluded with its evidence in a comment: Radau and BDF agree to 1e-9 while the class
-  stays 0.80 of Ta away as its sub-step shrinks. `test_rice2008_states_match_its_ode` compares all
-  nine states (`N_NoXB`, `P_NoXB` feed no output, so the outputs alone would not), and
+  (`MOMENT_PROTOCOLS`, the 50 um/s `stretch_at_peak` included, plus a slow stretch), off its
+  defaults (`RICE_OFF_DEFAULTS`) and with `rabbit_parameters()`, with bounded exceptions in
+  `RICE_BOUNDS` (`release_at_peak` 2.8e-3 and 3.7e-3 with rabbit parameters, the slow stretch
+  3.4e-4: the class's integrator, falling with its own sub-step, while Radau, BDF and LSODA agree
+  to 2e-10). Its `FLOOR` is in units of `Ta_max` (normalized force), so its Ta below 1 and its Tp
+  are held to an absolute 1e-4. `test_rice2008_states_match_its_ode` compares all nine states
+  (`N_NoXB`, `P_NoXB` feed no output, so the outputs alone would not), and
   `test_rice2008_derivatives_match_its_ode` the right-hand sides at random states that reach each
-  branch and both exponent caps.
+  branch, both exponent caps (past `_EXP_ARG_MAX`) and a negative calcium, at `Ta_max` 1 and 50.
 - **`rdq20mf.ode` is written by `tools/generate_rdq20mf_ode.py`** — change the generator and
   re-run it (`python3 tools/generate_rdq20mf_ode.py`), never edit the file;
   `tests/test_rdq20mf_ode_generator.py` fails if the two differ. States: `x_{a}{b}{c}{B}` is
@@ -197,14 +201,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   its CellML disagree it takes `kn_p = 500`, `kp_n = 50` /s and Eq. 22's sign from the CellML, and
   `SLrest = 1.9` um and `TmpC = 22.5` from the paper, every one also what the authors' own code (Data
   S1) has. `N_NoXB`/`P_NoXB` are kept as states though they feed nothing. Departures from the CellML's
-  literal forms (the class docstring has most; `Max(Tropreg, 0)` is in the code only): division-safe strain coefficients, hfmd/gxbmd exponents capped at 40
-  (`_EXP_ARG_MAX`, for `expm_batch`'s range), `Max(Tropreg, 0)`, an overlap floor and a calcium clamp at
+  literal forms (the class docstring has most; `Max(Tropreg, 0)` is in the code only): division-safe strain coefficients, hfmd/gxbmd exponents capped at 20
+  (`_EXP_ARG_MAX`, for `expm_batch`'s scaling; it binds only in fast lengthening, changing the outputs
+  by ≤ 1.1e-8), `Max(Tropreg, 0)`, an overlap floor and a calcium clamp at
   0. `tools/compare_rice2008_cellml.py` downloads the CellML and checks the `.ode` against it
-  (≤ 2.6e-14 at 200 random states, exit status 1 on a mismatch). The paper's mechanics (series
+  (≤ 4.2e-14 at 200 random states, exit status 1 on a mismatch). The paper's mechanics (series
   spring, afterload, unloaded cell) live in `demo/reproduce_figures_rice2008.py`, not the class; the
   demo shows Fig. 5's caption durations contradicted by its own curves, 5B run at 2.2 um not 2.3, and
-  Fig. 4 not reproduced by Data S1 either. The class reproduces Data S1's sample outputs (twitch 7e-6,
-  F-Ca ramp 2.5e-5); `tests/test_rice2008.py` pins each docstring claim.
+  Fig. 4 not reproduced by Data S1 either. The model's equations (CellML/`.ode`, solved with Radau)
+  reproduce Data S1's sample outputs (twitch 7e-6, F-Ca ramp 2.5e-5), and the class at 1 ms calls is
+  2.1e-5 from that solution on the twitch; `tests/test_rice2008.py` pins each docstring claim.
 - `src/crossbridge/utils.py`: synthetic `calcium_trace()`/`sl_trace()` generators for tests/demos,
   not physiological data; `janssen_calcium(t, frequency)`, Marzban et al.'s fits to measured rat
   calcium transients at 2-10 Hz, which drive the Tewari2016/Marzban2020 demos and tests; and
