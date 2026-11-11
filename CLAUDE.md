@@ -72,9 +72,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   does not depend on its batch. It is verified for shortening up to 300 um/s per 1 ms call but for
   **sustained lengthening only up to 25 um/s** (1e-3 of peak); beyond that the class does not
   converge to the model (frozen rates cannot follow `gxbT`), and `tests/test_rice2008.py` pins the
-  limit. RDQ20MF refreshes its
-  Ca-dependent rates every `freq_rates_update` (10) sub-steps and advances its crossbridges every
-  `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
+  limit. RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
+  advances its crossbridges every `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
   `marzban2020.py`, `musgrave2025.py`, `rice2008.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
@@ -167,12 +166,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   which `land2017.ode` and `lewalle2024.ode` need. Every test that needs it `importorskip`s it, so
   the suite passes without it, with those tests skipped; `tests/test_ode_file_attribute.py` and
   the generator test need no gotranx.
-- `Ta_max` semantics differ by model: `RDQ18` uses it directly
-  (`Ta_max * compute_permissivity()`); the others compute tension
+- `Ta_max` semantics differ by model: `RDQ18` and `Rice2008` use it directly
+  (`Ta_max * compute_permissivity()`; `Rice2008`'s `Ta`, `Ka` and `Tp` are the paper's normalized
+  force, ~1 at full activation at 37 °C, times `Ta_max`, default **1.0**, not kPa); the others compute tension
   intrinsically from their own params (`a_XB`/`Tref`/`kstiff1`,`kstiff2`) and only accept `Ta_max` for interface
   compatibility — check which applies before relying on it (`Musgrave2025`: `K_myo`, `rho_myo`).
-  `Rice2008` uses it like `RDQ18` does: its `Ta`, `Ka` and `Tp` are the paper's normalized force
-  (~1 at full activation at 37 °C) times `Ta_max`, default **1.0**, not kPa.
 - `Land2017` is the un-amended base model; `Lewalle2024` extends it by replacing its ad hoc
   `beta0`/`beta1` length-dependent activation with explicit myosin OFF-state feedback.
 - `Tewari2016` (rat; strain-moment crossbridges, metabolites, temperature, Rice activation) and
@@ -199,7 +197,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   its CellML disagree it takes `kn_p = 500`, `kp_n = 50` /s and Eq. 22's sign from the CellML, and
   `SLrest = 1.9` um and `TmpC = 22.5` from the paper, every one also what the authors' own code (Data
   S1) has. `N_NoXB`/`P_NoXB` are kept as states though they feed nothing. Departures from the CellML's
-  literal forms (docstring): division-safe strain coefficients, hfmd/gxbmd exponents capped at 40
+  literal forms (the class docstring has most; `Max(Tropreg, 0)` is in the code only): division-safe strain coefficients, hfmd/gxbmd exponents capped at 40
   (`_EXP_ARG_MAX`, for `expm_batch`'s range), `Max(Tropreg, 0)`, an overlap floor and a calcium clamp at
   0. `tools/compare_rice2008_cellml.py` downloads the CellML and checks the `.ode` against it
   (≤ 2.6e-14 at 200 random states, exit status 1 on a mismatch). The paper's mechanics (series
