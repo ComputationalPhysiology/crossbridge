@@ -47,12 +47,21 @@ single-overlap region, which switch at the same rates as ``N`` but recruit no
 crossbridges. No output and no other state depends on them; they are kept so
 that the states are Table 2's and the CellML's, one for one.
 
-**Departures from the paper**, both guards outside its range: the overlap
-length is floored at zero, since the formula of Eqs. 42-46 turns negative
-below SL = ``len_thin`` (1.2 um, under the paper's minimum of 1.4), and
-calcium is clamped at zero on input, as an EP model's undershoot can make it
-slightly negative. Two expressions are evaluated in forms that are the same
-algebra without a division that can be by zero: Eq. 10 as
+**Departures from the paper** (and the CellML), three guards outside its
+range: the overlap length is floored at zero, since the formula of Eqs.
+42-46 turns negative below SL = ``len_thin`` (1.2 um, under the paper's
+minimum of 1.4); calcium is clamped at zero on input, as an EP model's
+undershoot can make it slightly negative; and the exponent arguments of
+``hfmd`` and ``gxbmd`` (Eqs. 22 and 24) are capped at ``_EXP_ARG_MAX`` (40).
+Without that cap, strains past about 10 ``x_0`` drive Eq. 30's coefficient
+times the sub-step beyond the range of the matrix exponential (norms up to
+1.7e38, where `expm_batch` stops squaring), and the result is NaN; with both
+exponents at 40 it stays below 1e34 at the default rates. The cap binds only at strains 2-6
+``x_0`` or more from their isometric values, and never inside the verified
+range below, where the largest argument reached is 11.
+
+Two expressions are evaluated in forms that are the same algebra without a
+division that can be by zero: Eq. 10 as
 ``sqrt(Tropreg^nperm / (Tropreg^nperm + perm50^nperm))``, without dividing by
 ``Tropreg``, which is zero without calcium; and the strain coefficients of
 Eqs. 29-30 with the duty fractions of Eqs. 31-32 multiplied out,
@@ -90,16 +99,15 @@ and lengthening at up to 50 um/s, and 10 ms ramps at 1 ms calls stay within
 2e-3 for shortening at up to 100 um/s. The velocity-driven count is capped at
 ``_MAX_STRAIN_SUBSTEPS`` (500) per call, which covers SL changing by
 500 x 0.35 x_0 = 1.2 um in one call, more than a sarcomere's working range;
-beyond it the sub-steps lengthen and the error grows, to NaN at about four
-times the cap (a dSL of 5000 um/s over a 1 ms call). Fast stretch is outside
-the verified range for a reason of the model's own: past a strain of a few
+beyond it the sub-steps lengthen and the error grows without bound: the
+results stay finite but are meaningless (Ta of order 1e11 for a dSL of
+5000 um/s over one 1 ms call with SL held). Fast stretch is outside the
+verified range for a reason of the model's own: past a strain of a few
 ``x_0`` (lengthening at 100 um/s for 1 ms) the post-rotated bridges detach at
 1e20 /s and more, and Eq. 30's coefficient ``xPsi hfT / dutypostr`` reaches
 1e21 /s, so that its right-hand side is a cancellation no solver resolves
-(the class is then 2% from Radau). Past about 10 ``x_0`` (lengthening at
-150 um/s for 1 ms at 22.5 degC, 190 um/s at 37 degC) that coefficient times
-the sub-step leaves the range of the matrix exponential (norms up to 1.7e38)
-and the result is NaN.
+(the class is then 1.3% from Radau at 22.5 degC). Further out the exponent
+cap binds, and the results, though finite, are no longer the model's.
 
 Examples
 --------
@@ -127,6 +135,10 @@ _STRAIN_PER_SUBSTEP = 0.35  # [-]
 
 #: Cap on the sub-steps one call takes for velocity (module docstring).
 _MAX_STRAIN_SUBSTEPS = 500
+
+#: Cap on the exponent arguments of hfmd and gxbmd (Eqs. 22, 24), a guard that
+#: keeps the system within the range of `expm_batch` (module docstring).
+_EXP_ARG_MAX = 40.0  # [-]
 
 #: The states, in the order of the linear system.
 _STATES = (
@@ -391,11 +403,15 @@ class Rice2008(CardiacActivationModel):
         x_0, xpre, xpost = p["x_0"], x[_xXBprer], x[_xXBpostr]
         fappT = np.full_like(SL, self._fappT, dtype=float)
         gappT = self._gapp * (1.0 + (1.0 - SOVFthick) * p["gslmod"])
-        # exp(-sign(x) hfmdc (x / x_0)^2), the CellML's sign (module docstring)
-        hfT = self._hf * np.exp(-p["hfmdc"] * xpre * np.abs(xpre) / (x_0 * x_0))
+        # exp(-sign(x) hfmdc (x / x_0)^2), the CellML's sign (module docstring);
+        # both exponents capped at _EXP_ARG_MAX, a guard far outside the
+        # verified range
+        hf_arg = -p["hfmdc"] * xpre * np.abs(xpre) / (x_0 * x_0)
+        hfT = self._hf * np.exp(np.minimum(hf_arg, _EXP_ARG_MAX))
         hbT = np.full_like(SL, self._hbT, dtype=float)
         sigma = np.where(xpost < x_0, p["sigmap"], p["sigman"])
-        gxbT = self._gxb * np.exp(sigma * ((xpost - x_0) / x_0) ** 2)
+        gxb_arg = sigma * ((xpost - x_0) / x_0) ** 2
+        gxbT = self._gxb * np.exp(np.minimum(gxb_arg, _EXP_ARG_MAX))
 
         # Eqs. 31-32: steady fractions of the cycle in each attached state,
         # which set how fast the strains relax.

@@ -290,6 +290,30 @@ def test_strain_coefficients_survive_hfT_underflow():
     np.testing.assert_allclose(M[0, j, i], xPsi / rates["dutypostr"][0] * hfT, rtol=1e-13)
 
 
+@pytest.mark.parametrize("TmpC", [22.5, 37.0])
+def test_extreme_strains_stay_finite_and_silent(TmpC):
+    """
+    Strains far outside anything the dynamics reach -- every combination of 5 and 20 x_0
+    either side of their isometric values -- with SL held or stretched at 300 um/s: the cap
+    on the exponents of hfmd and gxbmd keeps every getter finite, with no warning.
+    """
+    x_0 = Rice2008.default_parameters()["x_0"]
+    offsets = np.array([-20.0, -5.0, 5.0, 20.0]) * x_0
+    pre, post = (a.ravel() for a in np.meshgrid(offsets, x_0 + offsets, indexing="ij"))
+    dSL = np.repeat([0.0, 300.0], pre.size)  # each combination held and stretched
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        activated = Rice2008(dSL.size, params={"TmpC": TmpC})
+        for _ in range(300):
+            activated.advance_step(1e-3, 2.0, 2.0, 0.0)
+        model = Rice2008(dSL.size, params={"TmpC": TmpC})
+        model.set_state(activated.get_state())
+        model.xXBprer, model.xXBpostr = np.tile(pre, 2), np.tile(post, 2)
+        model.advance_step(1e-3, 2.0, 2.0 + dSL * 1e-3, dSL)
+        for name, value in _getters(model).items():
+            assert np.all(np.isfinite(value)), name
+
+
 def test_velocity_estimated_from_successive_lengths():
     """With dSL_vals=None, dSL is (SL_k - SL_{k-1}) / dt, and zero on the first call."""
     estimated, explicit = Rice2008(2), Rice2008(2)
