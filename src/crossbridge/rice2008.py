@@ -95,8 +95,13 @@ Calcium, SL and dSL are held over the call.
 call is within 0.9% (22.5 degC) and 0.25% (37 degC) of the same call at
 1 us steps -- which agree with a Radau solution of the CellML equations to
 3e-5 -- for shortening at up to 300 um/s (with SL held, up to the cap below)
-and lengthening at up to 50 um/s, and 10 ms ramps at 1 ms calls stay within
-2e-3 for shortening at up to 100 um/s. The velocity-driven count is capped at
+and lengthening at up to 50 um/s -- in a *single* call; sustained lengthening
+is narrower, below. Sustained shortening is within 2e-3 of Radau for 10 ms
+ramps at 1 ms calls up to 100 um/s, and a release at 25 um/s from peak
+tension, then held, is within 3.5e-4 of the peak of Ta (1.9e-3 of Ka) at the
+shipped sub-step, 5.9e-4 and 2.5e-3 at 37 degC, the error being the time
+sub-step of the relaxation after the release, second order (a fifth of the
+sub-step gives 2e-5). The velocity-driven count is capped at
 ``_MAX_STRAIN_SUBSTEPS`` (500) per call, which covers SL changing by
 500 x 0.35 x_0 = 1.2 um in one call, more than a sarcomere's working range;
 beyond it the sub-steps lengthen and the error grows without bound: the
@@ -108,6 +113,17 @@ verified range for a reason of the model's own: past a strain of a few
 1e21 /s, so that its right-hand side is a cancellation no solver resolves
 (the class is then 1.3% from Radau at 22.5 degC). Further out the exponent
 cap binds, and the results, though finite, are no longer the model's.
+
+**Sustained lengthening is valid up to 25 um/s** (22.5 degC, 1 ms calls, 4 ms
+ramps from peak tension, held after): Ta is within 7.5e-5 of the peak of Radau
+at 25 um/s, 8.6e-4 at 27, 8.4e-3 at 28, and the class is wrong (no
+agreement at all) at 29 um/s and above. Beyond it the class does not converge
+to the model: for a 4 ms ramp at 50 um/s, Radau and BDF agree on Ta to 1e-9
+while the class stays 0.80 of Ta away as its sub-step is cut from 1e-4 to
+5e-7 s, and LSODA fails. The scheme freezes the rates over a sub-step, but
+``gxbT`` grows exponentially with a strain that the model slaves almost
+instantly (``xPsi D / fappT`` reaches 1e17 /s and more), so no frozen-rate
+sub-step follows it.
 
 Examples
 --------

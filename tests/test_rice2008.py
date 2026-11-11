@@ -344,3 +344,44 @@ def test_state_moves_between_parameter_sets():
     b.advance_step(1e-3, np.array([2.0, 10.0]), 2.2, 0.0)
     assert np.all(b.XBprer + b.XBpostr < attached)
     assert np.all(np.isfinite(b.get_active_tension()))
+
+
+def _sustained_stretch(v, dt_call):
+    """
+    Ta, Ka and bound_ca after each 1 ms of: 60 ms isometric at 2 um with Ca rising at 20 ms,
+    then 14 ms in which SL lengthens at `v` um/s for 4 ms and is held. The interval is split
+    into calls of `dt_call`, so that a call of 1e-5 s is a sub-step of 1e-5 s.
+    """
+    model = Rice2008(1)
+    Ca = lambda t: calcium_trace(np.array([t]), c0=0.1, cmax=3.0, t0=0.02)[0]  # noqa: E731
+    for k in range(60):
+        model.advance_step(1e-3, Ca(k * 1e-3), 2.0, 0.0)
+    out = []
+    for k in range(14):
+        SL = 2.0 + v * 0.004 * min((k + 1) / 4, 1.0)
+        for _ in range(round(1e-3 / dt_call)):
+            model.advance_step(dt_call, Ca(0.06 + k * 1e-3), SL, v if k < 4 else 0.0)
+        out.append(
+            [
+                model.get_active_tension()[0],
+                model.get_active_stiffness()[0],
+                model.bound_calcium_fraction()[0],
+            ]
+        )
+    return np.array(out)
+
+
+def test_sustained_lengthening_is_valid_up_to_25_um_per_s():
+    """
+    The class docstring's limit for sustained lengthening (4 ms ramps from peak, 22.5 degC):
+    at 25 um/s 1 ms calls are within 1e-3 of the peak of a reference at 1e-5 s calls (measured
+    9e-5), and that reference has converged (2e-5 s calls are within 3e-6 of it). At 28 um/s
+    the 1 ms calls are 7e-3 away and at 50 um/s the class does not converge at all, which is
+    why the limit is stated and `stretch_at_peak` is not compared with the .ode.
+    """
+    shipped = _sustained_stretch(25.0, 1e-3)
+    fine = _sustained_stretch(25.0, 2e-5)
+    finest = _sustained_stretch(25.0, 1e-5)
+    peak = np.abs(finest).max(axis=0)
+    assert np.all(np.abs(fine - finest).max(axis=0) / peak < 1e-5)
+    assert np.all(np.abs(shipped - finest).max(axis=0) / peak < 1e-3)

@@ -22,7 +22,6 @@ from crossbridge import (
     Rice2008,
     Tewari2016,
 )
-from crossbridge import rice2008
 from crossbridge.rice2008 import _STATES
 from crossbridge.utils import calcium_trace
 
@@ -902,32 +901,39 @@ RICE_OFF_DEFAULTS = {
 }
 
 
-#: Rice2008 against its file over the moment models' protocols (including `release_at_peak`),
-#: but for `stretch_at_peak`, and a slower stretch in its place. Lengthening 0.2 um in 4 ms
-#: (50 um/s) takes the post-rotated strain past 6 x_0, where the exponent cap of gxbmd binds and
-#: the class's exponential no longer resolves the 1e20 /s detachment (class docstring: "outside
-#: the verified range"); class and file have the same right-hand side there
-#: (`test_rice2008_derivatives_match_its_ode` reaches the cap), and the class is 0.1-1.0 of the
-#: peak from the reference at every sub-step down to 1e-5 s. 10 um/s stays inside the range.
+#: Rice2008 against its file over the moment models' protocols, but for `stretch_at_peak`, and a
+#: slower stretch in its place. Lengthening 0.2 um in 4 ms (50 um/s), sustained, is excluded
+#: because the class does not converge to the model there (class docstring, "Sustained
+#: lengthening"): from the state at 60 ms, Radau and BDF (rtol 1e-11) agree on Ta over the next
+#: six 1 ms calls to 1e-9 (2.8283; LSODA fails to converge), and the class stays 0.80 of Ta
+#: away from them as its sub-step is forced from 1e-4 down to 1e-5, 2e-6 and 5e-7 s (0.801,
+#: 0.800, 0.799, 0.799), with its strain criterion off. The right-hand sides agree there
+#: (`test_rice2008_derivatives_match_its_ode` reaches the exponent caps). The slow stretch,
+#: 0.1 um in 10 ms, is inside the range; `tests/test_rice2008.py` pins the limit, 25 um/s.
 RICE_PROTOCOLS = {
     **{k: v for k, v in MOMENT_PROTOCOLS.items() if k != "stretch_at_peak"},
     "slow_stretch_at_peak": lambda t: 2.0 + 0.1 * np.clip((t - 0.06) / 0.01, 0, 1),
 }
-#: The class's sub-step for the protocols that move SL. Its error against the reference is
-#: second order in the sub-step (at the default 1e-4 s, 1.9e-3 of the peak of Ka for
-#: `release_at_peak`, 2.3e-4 for the slow stretch; at 5e-5 s 3.9e-4 and 5.9e-5; at 2.5e-5 s
-#: 8.2e-5 and 1.5e-5, in the rabbit parameters 1.2e-4 and 1.8e-5), and the reference agrees
-#: with itself, so this is the class's integrator, which the file is not the cause of.
-RICE_FINE_SUBSTEP = 2e-5  # [s]
+#: Bounds where Rice2008 is further than 1e-4 from the file at its shipped sub-steps, about 1.5
+#: times the error measured there (key: (parameters, protocol); every other case keeps 1e-4).
+#: The file is not the cause: Radau, BDF and LSODA (rtol 1e-11) agree on Ta of each of these
+#: protocols to 2e-10 of its peak or better, and the class's error falls at second order with its
+#: own sub-step: `release_at_peak` 1.9e-3 (largest output, Ka) at the shipped `_TARGET_SUBSTEP`
+#: of 1e-4 s, 3.9e-4 at 5e-5 and 8.2e-5 at 2.5e-5 (rabbit parameters 2.5e-3, 5.5e-4, 1.2e-4);
+#: the slow stretch 2.3e-4, 5.9e-5, 1.5e-5. What is left at the shipped step is the time
+#: sub-step of the relaxation after the movement stops (the worst calls have dSL = 0).
+RICE_BOUNDS = {
+    ("default", "release_at_peak"): 2.8e-3,
+    ("rabbit", "release_at_peak"): 3.7e-3,
+    ("default", "slow_stretch_at_peak"): 3.4e-4,
+}
 
 
 @pytest.mark.parametrize("protocol", sorted(RICE_PROTOCOLS))
-def test_rice2008_matches_its_ode(protocol, monkeypatch):
-    if protocol in {"release_at_peak", "slow_stretch_at_peak"}:
-        monkeypatch.setattr(rice2008, "_TARGET_SUBSTEP", RICE_FINE_SUBSTEP)
+def test_rice2008_matches_its_ode(protocol):
     Ca, SL, dSL = _inputs(RICE_PROTOCOLS[protocol], cmax=3.0)
     errors = _trajectory_errors(Rice2008, {}, {}, Ca, SL, dSL)
-    assert max(errors.values()) < 1e-4, errors
+    assert max(errors.values()) < RICE_BOUNDS.get(("default", protocol), 1e-4), errors
 
 
 def test_rice2008_matches_its_ode_off_its_defaults():
@@ -937,14 +943,12 @@ def test_rice2008_matches_its_ode_off_its_defaults():
 
 
 @pytest.mark.parametrize("protocol", ["isometric", "release_at_peak"])
-def test_rice2008_matches_its_ode_with_rabbit_parameters(protocol, monkeypatch):
-    if protocol == "release_at_peak":
-        monkeypatch.setattr(rice2008, "_TARGET_SUBSTEP", RICE_FINE_SUBSTEP)
+def test_rice2008_matches_its_ode_with_rabbit_parameters(protocol):
     params = Rice2008.rabbit_parameters()
     ode_params = {k: v for k, v in params.items() if k not in NON_ODE}
     Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
     errors = _trajectory_errors(Rice2008, params, ode_params, Ca, SL, dSL)
-    assert max(errors.values()) < 1e-4, errors
+    assert max(errors.values()) < RICE_BOUNDS.get(("rabbit", protocol), 1e-4), errors
 
 
 def test_rice2008_states_match_its_ode():
