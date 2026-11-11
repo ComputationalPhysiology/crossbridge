@@ -6,8 +6,8 @@ Test philosophy mirrors the other per-model suites:
   - Mathematical: normalized maximal force, steady strains, conservation of the
     occupancies, step-length independence
   - Review focus: no calcium, lengths outside the paper's range, fast shortening at body
-    temperature, velocity estimated from successive lengths, a state moved between
-    parameter sets
+    temperature, a fast release within one call and its batch-mates, velocity estimated
+    from successive lengths, a state moved between parameter sets
 
 The reference values come from an independent Radau solution of the CellML equations in s.
 At 22.5 degC that solution reproduces the authors' Data S1 sample outputs: the Fig. 5 twitch
@@ -215,6 +215,57 @@ def test_fast_shortening_at_body_temperature():
         assert np.all(np.isfinite(Ta_coarse)) and np.all(np.isfinite(Ta_fine))
         assert fine.xXBprer[0] < -0.05 * fine.p["x_0"], "the ramp did not compress the bridges"
         assert np.max(np.abs(np.array(Ta_coarse) - np.array(Ta_fine))) < 2e-3
+
+
+@pytest.mark.parametrize("TmpC, dSL", [(22.5, -100.0), (37.0, -150.0)])
+def test_fast_release_in_one_call(TmpC, dSL):
+    """
+    A 1 ms call shortening at 100-150 um/s, where 0.1 ms sub-steps alone went to NaN: each
+    sub-step moves SL by at most 0.35 x_0, which keeps Ta within 1% of the same call at
+    1 us steps.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        activated = Rice2008(1, params={"TmpC": TmpC})
+        for _ in range(300):
+            activated.advance_step(1e-3, 2.0, 2.0, 0.0)
+        coarse, fine = (Rice2008(1, params={"TmpC": TmpC}) for _ in range(2))
+        for model in (coarse, fine):
+            model.set_state(activated.get_state())
+
+        SL = 2.0 + dSL * 1e-3
+        coarse.advance_step(1e-3, 2.0, SL, dSL)
+        for _ in range(1000):
+            fine.advance_step(1e-6, 2.0, SL, dSL)
+        Ta, Ta_ref = coarse.get_active_tension()[0], fine.get_active_tension()[0]
+
+    assert np.isfinite(Ta)
+    assert abs(Ta - Ta_ref) < 0.01 * max(abs(Ta_ref), 0.01), (Ta, Ta_ref)
+
+
+def test_fast_cell_leaves_its_batch_mates_alone():
+    """
+    Each cell takes its own number of sub-steps, so a cell shortening at 150 um/s (62 of them
+    per 1 ms call) next to an isometric one (10) changes nothing for either: both evolve
+    bit-identically to running alone.
+    """
+    SL0, dSL = np.array([2.2, 2.2]), np.array([-150.0, 0.0])
+    batch = Rice2008(2)
+    singles = [Rice2008(1), Rice2008(1)]
+    for k in range(53):
+        moving = k >= 50  # activate, then release cell 0 for 3 ms, to SL 1.75 um
+        SL = SL0 + dSL * (k - 49) * 1e-3 if moving else SL0
+        v = dSL if moving else np.zeros(2)
+        batch.advance_step(1e-3, 2.0, SL, v)
+        for i, single in enumerate(singles):
+            single.advance_step(1e-3, 2.0, SL[i : i + 1], v[i : i + 1])
+
+    batch_state = batch.get_state()
+    for i, single in enumerate(singles):
+        for key, value in single.get_state().items():
+            if np.ndim(value):
+                np.testing.assert_array_equal(batch_state[key][i], value[0], err_msg=f"{key}[{i}]")
+    assert batch.xXBprer[0] < 0.0 < batch.get_active_tension()[1]
 
 
 def test_velocity_estimated_from_successive_lengths():

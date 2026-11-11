@@ -65,8 +65,34 @@ predictor (the exponential midpoint rule), which keeps the error second order
 in the sub-step. The system is stiff (the authors used CVODE): ``kp_nT``
 reaches 2500 /s at 22.5 degC and 5000 /s at 37 degC when the filament is off,
 and at 37 degC the strains relax at about 10^4 /s; the exponential takes
-those exactly. Sub-steps are at most ``_TARGET_SUBSTEP``; calcium, SL and dSL
-are held over the call.
+those exactly. What it cannot take exactly is the strain dependence of
+``hfT`` and ``gxbT``, exponential in the squared strain: a sub-step that
+moves the strain by a large fraction of ``x_0`` freezes them at a midpoint
+the predictor misjudges, and with 0.1 ms sub-steps alone, shortening at
+100 um/s for 1 ms gave NaN. So each cell takes sub-steps of at most
+``_TARGET_SUBSTEP`` and, when it moves fast, more of them, short enough that
+SL moves by at most ``_STRAIN_PER_SUBSTEP`` x_0 (0.35) in each -- a count of
+its own, so that its result does not depend on its batch-mates. 0.35 is the largest
+value that keeps one 1 ms call within 1% of the same call at 1 us steps when
+shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC). Calcium, SL and
+dSL are held over the call.
+
+**Verified range.** From an activated state (Ca 2 uM, SL 2 um), one 1 ms
+call is within 0.9% (22.5 degC) and 0.25% (37 degC) of the same call at
+1 us steps -- which agree with a Radau solution of the CellML equations to
+3e-5 -- for shortening at up to 300 um/s (with SL held, up to the cap below)
+and lengthening at up to 50 um/s, and 10 ms ramps at 1 ms calls stay within
+2e-3 for shortening at up to 100 um/s. The velocity-driven count is capped at
+``_MAX_STRAIN_SUBSTEPS`` (500) per call, which covers SL changing by
+500 x 0.35 x_0 = 1.2 um in one call, more than a sarcomere's working range;
+beyond it the sub-steps lengthen and the error grows, to NaN at about four
+times the cap (a dSL of 5000 um/s over a 1 ms call). Fast stretch is outside
+the verified range for a reason of the model's own: past a strain of a few
+``x_0`` (lengthening at 100 um/s for 1 ms) the post-rotated bridges detach at
+1e20 /s and more, and Eq. 30's coefficient ``xPsi hfT / dutypostr`` reaches
+1e21 /s, so that its right-hand side is a cancellation no solver resolves
+(the class is then 2% from Radau); past about 12 ``x_0``, ``hfT`` underflows
+and Eq. 30 is 0/0, NaN here as in the CellML.
 
 Examples
 --------
@@ -86,6 +112,14 @@ from .base import CardiacActivationModel
 
 #: Longest sub-step [s] over which the rates are held.
 _TARGET_SUBSTEP = 1e-4  # [s]
+
+#: Most sarcomere-length change per sub-step, in units of x_0 (each strain is
+#: driven by half of it): a cell moving fast takes more sub-steps than
+#: `_TARGET_SUBSTEP` gives. Chosen by measurement; see the module docstring.
+_STRAIN_PER_SUBSTEP = 0.35  # [-]
+
+#: Cap on the sub-steps one call takes for velocity (module docstring).
+_MAX_STRAIN_SUBSTEPS = 500
 
 #: The states, in the order of the linear system.
 _STATES = (
@@ -378,7 +412,7 @@ class Rice2008(CardiacActivationModel):
         x_0, xPsi = p["x_0"], p["xPsi"]
         konCa = self._konT * Ca
 
-        M = np.zeros((self.num_cells, _SIZE, _SIZE))
+        M = np.zeros((len(kn_pT), _SIZE, _SIZE))
         # Eqs. 1-2: troponin C
         M[:, _TRPNCaH, _TRPNCaH] = -konCa - self._koffHT
         M[:, _TRPNCaH, _ONE] = konCa
@@ -427,18 +461,21 @@ class Rice2008(CardiacActivationModel):
         Ca: npt.NDArray[np.float64],
         SL: npt.NDArray[np.float64],
         dSL: npt.NDArray[np.float64],
-        h: float,
+        h: npt.NDArray[np.float64],
     ) -> npt.NDArray[np.float64]:
-        """One exponential-midpoint sub-step of length h; x has shape (9, n)."""
+        """
+        One exponential-midpoint sub-step; x has shape (9, n) and each cell
+        its own length h, shape (n,).
+        """
         # [x, 1] per cell, contiguous: a stacked matmul then gives each cell the
         # same arithmetic whatever its batch-mates (as in Tewari2016).
-        x1 = np.empty((self.num_cells, _SIZE, 1))
+        x1 = np.empty((x.shape[1], _SIZE, 1))
         x1[:, :_ONE, 0] = x.T
         x1[:, _ONE, 0] = 1.0
 
         def solve(rates, step):
-            M = self._system(Ca, dSL, rates)
-            return np.ascontiguousarray((expm_batch(M, step) @ x1)[:, :_ONE, 0].T)
+            M = self._system(Ca, dSL, rates) * step[:, None, None]
+            return np.ascontiguousarray((expm_batch(M) @ x1)[:, :_ONE, 0].T)
 
         x_half = solve(self._rates(x, SL), 0.5 * h)
         return solve(self._rates(x_half, SL), h)
@@ -460,9 +497,10 @@ class Rice2008(CardiacActivationModel):
         Parameters
         ----------
         dt : float
-            Time step [s]. Any length: it is split into sub-steps of at most
-            `_TARGET_SUBSTEP`, with Ca_val, SL_vals and dSL_vals held fixed
-            (zero-order hold) across it.
+            Time step [s]. Any length: each cell splits it into sub-steps of
+            at most `_TARGET_SUBSTEP`, and more when it shortens or lengthens
+            fast (see the module docstring), with Ca_val, SL_vals and dSL_vals
+            held fixed (zero-order hold) across it.
         Ca_val : float or np.ndarray, shape (num_cells,)
             Intracellular calcium concentration [uM]. Negative values are
             taken as zero.
@@ -485,11 +523,24 @@ class Rice2008(CardiacActivationModel):
         else:
             dSL = np.zeros(n)
 
-        n_sub = max(1, int(np.ceil(dt / _TARGET_SUBSTEP - 1e-9)))
+        # Sub-steps per cell: at most _TARGET_SUBSTEP long, and short enough
+        # that SL moves by at most _STRAIN_PER_SUBSTEP x_0 in each (capped).
+        # Each cell takes its own, so its result does not depend on its
+        # batch-mates; cells that have finished are left alone.
+        n_time = max(1, int(np.ceil(dt / _TARGET_SUBSTEP - 1e-9)))
+        n_strain = np.ceil(np.abs(dSL) * dt / (_STRAIN_PER_SUBSTEP * self.p["x_0"]))
+        # (fmin: a NaN dSL takes the cap and shows in the state, not skipped)
+        n_sub = np.maximum(n_time, np.fmin(n_strain, _MAX_STRAIN_SUBSTEPS)).astype(int)
         h = dt / n_sub
         x = self._get_x()
-        for _ in range(n_sub):
-            x = self._advance(x, Ca, SL, dSL, h)
+        for k in range(int(n_sub.max(initial=0))):
+            active = n_sub > k
+            if active.all():
+                x = self._advance(x, Ca, SL, dSL, h)
+            else:
+                x[:, active] = self._advance(
+                    x[:, active], Ca[active], SL[active], dSL[active], h[active]
+                )
         self._set_x(x)
 
         self._SL_prev = SL
