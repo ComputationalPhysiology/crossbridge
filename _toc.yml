@@ -13,6 +13,7 @@ parts:
       - file: "docs/models/tewari2016"
       - file: "docs/models/marzban2020"
       - file: "docs/models/musgrave2025"
+      - file: "docs/models/rice2008"
 
   - caption: Examples
     chapters:
@@ -26,6 +27,7 @@ parts:
       - file: "demo/reproduce_figures_tewari2016"
       - file: "demo/reproduce_figures_marzban2020"
       - file: "demo/reproduce_figures_musgrave2025"
+      - file: "demo/reproduce_figures_rice2008"
       - file: "demo/compare_models"
 
   - caption: Python API
