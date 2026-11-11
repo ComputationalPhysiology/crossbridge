@@ -107,9 +107,10 @@
 #   about 3.5 to 9) and from 11.3 to 51.9 /s at 25 degC (12.5 to 52).
 #
 # **What does not: Fig. 4.** The authors' own code does not reproduce the
-# paper's Fig. 4 either. This was checked outside this notebook, by the
-# review of this script, with a transcription of Data S1's muscle model
-# solved with LSODA at tight tolerances.
+# paper's Fig. 4 either. This was checked outside this notebook: the model's
+# equations (the CellML's, as in `rice2008.ode`) coupled to a transcription
+# of Data S1's muscle model (its `mshrel` set), solved with LSODA at tight
+# tolerances (rtol 1e-9).
 #
 # - With the same sharp release as here, that transcription agrees with
 #   this notebook to 0.04 um/s in the window velocities and to 0.003 um in
@@ -131,10 +132,12 @@
 # - No single window reproduces all three of the paper's Vmax values. Over
 #   5-15 ms, zero afterload gives 14.90 and 18.37 um/s at 20 and 25 degC
 #   (paper 3.82 and 8.03). The velocity after the release is not constant
-#   at light loads (see the shoulder below). The review found that the
-#   velocity at a fixed delay matches the paper's points at a different
-#   delay for each temperature: about 10 ms at 30 degC, 30 ms at 25 degC
-#   and 40 ms at 20 degC.
+#   at light loads (see the shoulder below). Sampled outside this notebook
+#   from its own Fig. 4 runs, as the mean over 1 ms at a fixed delay after
+#   the release, the velocity matches the paper's points (afterloads 0-0.7)
+#   at a different delay for each temperature: about 10 ms at 30 degC,
+#   30 ms at 25 degC and 40 ms at 20 degC (least relative RMS difference
+#   at 11, 27 and 38 ms).
 # - At 20 degC the Eq. 41 fit gives b 0.60 against 0.89, a 0.159 against
 #   0.19, and Vmax 3.49 against 3.82. The cause is the shape of the model's
 #   V(F), not the afterloads 0.8 and 0.85, which lengthen slowly because
@@ -154,11 +157,12 @@
 #
 # **Numerics.** The muscle model of Figs. 4, 6 and 7 is coupled to the class
 # at 0.1 ms steps. Halving the step moves Fig. 6's shortest SL by at most
-# 3.8e-05 um. Every mechanics run stays inside the range over which
-# `Rice2008`'s integrator is verified (shortening to 300 um/s per 1 ms call,
-# sustained lengthening to 25 um/s). The fastest shortening is 25.6 um/s,
-# in the zero-afterload release at 30 degC, and the fastest lengthening is
-# 4.96 um/s, in Fig. 7's KSE 1 relengthening.
+# 3.8e-05 um. Every mechanics run stays inside the sustained velocities over
+# which `Rice2008`'s integrator is verified against a Radau solution of its
+# equations (its docstring: 10 ms shortening ramps to 100 um/s, lengthening
+# to 300 um/s). The fastest shortening is 25.6 um/s, in the zero-afterload
+# release at 30 degC, and the fastest lengthening is 4.96 um/s, in Fig. 7's
+# KSE 1 relengthening.
 #
 # This can also be run as a standalone script, saving each figure to a PNG
 # file instead of displaying it inline:
@@ -435,9 +439,10 @@ def plot_fig3(save=True):
 # the total force, ``F_active + F_passive``.
 #
 # The release and the length limits here are sharp: on at 0.65 s, and dSL
-# zero outside 1.4 < SL <= 2.4. Data S1 smooths both with tanh, which,
-# measured in the review of this script, changes Fig. 4's velocities by at
-# most 0.25 um/s.
+# zero outside 1.4 < SL <= 2.4. Data S1 smooths both with tanh, which changes
+# Fig. 4's velocities by at most 0.25 um/s (measured outside this notebook
+# with the LSODA transcription of Data S1's muscle model described in the
+# introduction, once with each).
 
 # %%
 def simulate_muscle(Ca, t_end, SLset, *, KSE=None, afterload=None, release_time=None, params=None, mass=5e-5, viscosity=0.003, dt=1e-4):
@@ -511,14 +516,14 @@ def simulate_muscle(Ca, t_end, SLset, *, KSE=None, afterload=None, release_time=
 
 def report_velocities(result, label):
     """
-    Print a run's fastest shortening and lengthening against the range over
-    which `Rice2008`'s integrator is verified (its module docstring:
-    shortening to 300 um/s per 1 ms call, sustained lengthening to 25 um/s).
+    Print a run's fastest shortening and lengthening against the sustained
+    velocities over which `Rice2008`'s integrator is verified (its module
+    docstring: 10 ms shortening ramps to 100 um/s, lengthening to 300 um/s).
     """
     v = np.diff(result["SL"], axis=0) / np.diff(result["t"])[:, None]
     shortening, lengthening = max(-v.min(), 0.0), max(v.max(), 0.0)
-    inside = shortening <= 300.0 and lengthening <= 25.0
-    print(f"    {label}: fastest shortening {shortening:.1f} um/s, lengthening {lengthening:.2f} um/s ({'inside' if inside else 'OUTSIDE'} the verified 300 / 25 um/s)")
+    inside = shortening <= 100.0 and lengthening <= 300.0
+    print(f"    {label}: fastest shortening {shortening:.1f} um/s, lengthening {lengthening:.2f} um/s ({'inside' if inside else 'OUTSIDE'} the verified 100 / 300 um/s)")
 
 
 # %% [markdown]
