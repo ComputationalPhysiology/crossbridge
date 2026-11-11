@@ -33,14 +33,18 @@
 # - **Fig. 8** -- tension redevelopment (Ktr) against calcium and temperature.
 #
 # Not covered: the schematics (Figs. 1A, 1D, 2 and 11), and Figs. 9 and 10,
-# which couple the model to the Chicago rabbit cell model.
+# which couple the model to the Chicago rabbit cell model. For the same
+# reason `Rice2008.rabbit_parameters()` is not plotted.
 #
-# **Protocols.** The paper does not give the sarcomere length, calcium or
-# afterloads of Figs. 4 and 8; these come from its Data S1, the authors' own
-# code (parameter sets `mshrel` and `isosktr`). Fig. 4A runs at 25 degC, as
-# its caption says, not at Data S1's 30 degC. Fig. 5B runs at 2.2 um, as the
-# text says, not at its caption's 2.3 um. Where the paper and its CellML
-# transcription differ, the class follows the CellML for `kn_p` = 500 and
+# **Protocols.** Some protocol values come from the paper's Data S1, the
+# authors' own code (parameter sets `mshrel` and `isosktr`), because the
+# paper does not give them. For Fig. 4 these are the calcium step and the
+# set length of 2.2 um; the release at 0.65 s and the afterloads are its
+# caption's. For Fig. 8 they are the sarcomere length and the calcium
+# levels. Fig. 4A runs at 25 degC, as its caption says, not at Data S1's
+# 30 degC. Fig. 5B runs at 2.2 um, as the text says, not at its caption's
+# 2.3 um. Where the paper and its CellML transcription differ, the class
+# follows the CellML for `kn_p` = 500 and
 # `kp_n` = 50 /s and for the sign of Eq. 22, and the paper for the rest
 # length of 1.9 um and the collagen force (Eq. 48). Its default temperature
 # is 22.5 degC. All of these choices are also Data S1's, apart from the
@@ -48,10 +52,11 @@
 # the CellML's sign for the integral of force, and the paper's preload
 # (Eq. 52).
 #
-# **What reproduces.** Every number below is printed by this notebook.
-# "Read off" marks values read off the paper's figures, to about 0.005 force
-# units or um, 0.1 um/s, or a few ms. The other paper values are printed in
-# the paper.
+# **What reproduces.** Every model number in this list is printed by this
+# notebook. So are those under "What does not", except the ones marked as
+# measured outside it. "Read off" marks values read off the paper's figures,
+# to about 0.005 force units or um, 0.1 um/s, or a few ms. The other paper
+# values are printed in the paper.
 #
 # - Fig. 1B: thin-filament fraction 0.1667 at 1.4 um and 0.6458 at 2.4 um
 #   (paper 0.17 and 0.64), thick-filament fraction 1 at 2.3-2.4 um.
@@ -68,11 +73,14 @@
 #   7.6), and 6.004 and 4.11 for KSE 1 (paper 6.0, 4.0).
 # - Fig. 3C: pCa50 5.980 and nH 2.77 (paper 5.9, 3.0), shortest SL 1.4362 um
 #   (paper 1.4-1.5).
-# - Fig. 4B at 20 and 25 degC: the shortening velocities match the paper's
-#   plotted points to within 0.45 um/s (25 degC: 8.34, 4.55, 3.08 um/s at
-#   afterloads 0, 0.1, 0.2, read off 8.1, 5.0, 3.2). At 25 degC the Eq. 41 fit
-#   is Vmax 8.29 um/s, a 0.175, b 1.49 um/s and k 0.180 (paper 8.03, 0.19,
-#   1.6, 0.20).
+# - Fig. 4B at 20 and 25 degC: the paper does not say where it averaged the
+#   velocity ("the relatively constant region", apparently judged trace by
+#   trace). This notebook uses one window for every trace, 20-40 ms after
+#   the release, **chosen because it matches** the paper's 20 and 25 degC
+#   points. There the velocities are within 0.45 um/s of the read-offs
+#   (25 degC: 8.34, 4.55, 3.08 um/s at afterloads 0, 0.1, 0.2, read off 8.1,
+#   5.0, 3.2). At 25 degC the Eq. 41 fit is Vmax 8.29 um/s, a 0.175, b
+#   1.49 um/s and k 0.180 (paper 8.03, 0.19, 1.6, 0.20).
 # - Fig. 5: peaks 0.1340 to 0.8256 (5A) and 0.6930 to 0.0996 (5B), each
 #   within 0.004 of the paper's figure (read off 0.135 to 0.825 and 0.69 to
 #   0.10). The 50%-50% durations are 0.1273 s (dagger), 0.1574 s (circle)
@@ -98,27 +106,51 @@
 #   to 22). Over pCa 5.0-6.4 it runs from 2.8 to 8.5 /s at 15 degC (read off
 #   about 3.5 to 9) and from 11.3 to 51.9 /s at 25 degC (12.5 to 52).
 #
-# **What does not.** Fig. 4 has four mismatches.
+# **What does not: Fig. 4.** The authors' own code does not reproduce the
+# paper's Fig. 4 either. This was checked outside this notebook, by the
+# review of this script, with a transcription of Data S1's muscle model
+# solved with LSODA at tight tolerances.
 #
-# - At 30 degC the 20-40 ms window misses the paper's fastest velocities: by
-#   then the lightest loads have shortened far and are slowing down. At zero
-#   afterload the velocity is 12.98 um/s in the window and 23.44 over 5-15 ms
-#   (paper 22.7), so Vmax comes out 13.02 against 22.7. The paper's points
-#   from afterload 0.3 up are reproduced (4.81, 3.56, 2.61 um/s against the
-#   read-offs 5.0, 3.8, 2.9).
+# - With the same sharp release as here, that transcription agrees with
+#   this notebook to 0.04 um/s in the window velocities and to 0.003 um in
+#   SL.
+# - Data S1 smooths the release and the length limits with tanh. That adds
+#   at most 0.25 um/s to the window velocities (0.21 at zero afterload,
+#   much less under load), and moves 4A's end points by at most 0.002 um.
+# - At its own 30 degC, Data S1 ends 4A's 0.5 trace even shorter, at
+#   1.749 um at 1 s (paper 1.995).
+#
+# The mismatches below are therefore between the paper's figure and its own
+# model, not this implementation's.
+#
+# - At 30 degC the 20-40 ms window misses the paper's fastest velocities.
+#   At zero afterload the velocity is 12.98 um/s in the window and 23.44
+#   over 5-15 ms (paper 22.7), so Vmax comes out 13.02 against 22.7. The
+#   paper's points from afterload 0.3 up are reproduced (4.81, 3.56,
+#   2.61 um/s against the read-offs 5.0, 3.8, 2.9).
 # - No single window reproduces all three of the paper's Vmax values. Over
 #   5-15 ms, zero afterload gives 14.90 and 18.37 um/s at 20 and 25 degC
-#   (paper 3.82 and 8.03).
-# - At 20 degC the isometric force at the release (0.7666) is below the
-#   afterloads 0.8 and 0.85, so those two lengthen slowly. The Eq. 41 fit
-#   then gives b 0.60 against 0.89, a 0.159 against 0.19, and Vmax 3.49
-#   against 3.82.
+#   (paper 3.82 and 8.03). The velocity after the release is not constant
+#   at light loads (see the shoulder below). The review found that the
+#   velocity at a fixed delay matches the paper's points at a different
+#   delay for each temperature: about 10 ms at 30 degC, 30 ms at 25 degC
+#   and 40 ms at 20 degC.
+# - At 20 degC the Eq. 41 fit gives b 0.60 against 0.89, a 0.159 against
+#   0.19, and Vmax 3.49 against 3.82. The cause is the shape of the model's
+#   V(F), not the afterloads 0.8 and 0.85, which lengthen slowly because
+#   the isometric force at the release (0.7666) is below them. Refitted
+#   without those two outside this notebook, the fit is further off: b 0.34,
+#   a 0.131, Vmax 3.52.
 # - Fig. 4A at 25 degC: the zero-afterload trace matches the paper's (SL
 #   1.444 against 1.445 um at 1 s). The loaded traces end shorter: 0.5 ends
 #   at 1.911 against 1.995 um, and 0.3 at 1.653 against 1.715. Their
 #   velocities in the window match Fig. 4B, so the paper's traces slow down
 #   more afterwards. The lightly loaded traces also show a shoulder 10-20 ms
-#   after the release, where the paper's look smooth.
+#   after the release, where the paper's look smooth. Run outside this
+#   notebook at 22.5 degC (Table 3's temperature), the loaded traces end
+#   closer to the paper's (0.5 at 1.992 um), but the zero-afterload trace
+#   falls too slowly (1.736 um at 0.7 s, paper about 1.63). No single
+#   temperature reproduces the panel.
 #
 # **Numerics.** The muscle model of Figs. 4, 6 and 7 is coupled to the class
 # at 0.1 ms steps. Halving the step moves Fig. 6's shortest SL by at most
@@ -401,6 +433,11 @@ def plot_fig3(save=True):
 # the mass oscillates with a period of about 5 ms. The default 0.1 ms step
 # resolves that, and the step check under Fig. 6 confirms it. ``F_total`` is
 # the total force, ``F_active + F_passive``.
+#
+# The release and the length limits here are sharp: on at 0.65 s, and dSL
+# zero outside 1.4 < SL <= 2.4. Data S1 smooths both with tanh, which,
+# measured in the review of this script, changes Fig. 4's velocities by at
+# most 0.25 um/s.
 
 # %%
 def simulate_muscle(Ca, t_end, SLset, *, KSE=None, afterload=None, release_time=None, params=None, mass=5e-5, viscosity=0.003, dt=1e-4):
@@ -489,17 +526,21 @@ def report_velocities(result, label):
 #
 # A muscle at 2.2 um is activated by a calcium step to 10 uM at 0.5 s and
 # held isometric. At 0.65 s it is released against an afterload of 0 to 0.8
-# (by 0.1), or 0.85 (about isometric). These values are Data S1's (`mshrel`);
-# the paper gives none. Fig. 4A is at 25 degC, as its caption says. Data S1's
-# set has 30 degC, but the paper's zero-afterload trace is the model's at
-# 25 degC. Fig. 4B is at 20, 25 and 30 degC.
+# (by 0.1), or 0.85 (about isometric). The release time and the afterloads
+# are the caption's. The calcium step and the set length are Data S1's
+# (`mshrel`), as the paper gives neither. Fig. 4A is at 25 degC, as its
+# caption says. Data S1's set has 30 degC, but the paper's zero-afterload
+# trace is the model's at 25 degC. Fig. 4B is at 20, 25 and 30 degC.
 #
 # Right after the release, the attached crossbridges are unloaded in a fast
-# transient (the paper's arrow). The muscle then shortens at a roughly
-# constant velocity. Velocity here is the mean over 20-40 ms after the
-# release; at 20 and 25 degC the transient has died out by then at every
-# afterload. The fit is the paper's Eq. 41, ``V = (a Vmax - b F) / (F + a)``,
-# with F the afterload.
+# transient (the paper's arrow). The paper averages the velocity over "the
+# relatively constant region" that follows, without saying where. At light
+# loads the model's velocity is not constant there: it dips and recovers
+# for tens of ms (the shoulder in A). Velocity here is the mean over one
+# window for every trace, 20-40 ms after the release. That window was
+# chosen because it matches the paper's 20 and 25 degC points; at 30 degC
+# it misses the fastest ones (see the docstring). The fit is the paper's
+# Eq. 41, ``V = (a Vmax - b F) / (F + a)``, with F the afterload.
 
 # %%
 LOADS = np.r_[np.arange(0.0, 0.81, 0.1), 0.85]
