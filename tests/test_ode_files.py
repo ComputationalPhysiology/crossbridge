@@ -13,13 +13,31 @@ agree to 1e-4 of the peak of each output.
 import numpy as np
 import pytest
 
-from crossbridge import RDQ20MF, Land2017, Lewalle2024, Marzban2020, Musgrave2025, Tewari2016
+from crossbridge import (
+    RDQ20MF,
+    Land2017,
+    Lewalle2024,
+    Marzban2020,
+    Musgrave2025,
+    Rice2008,
+    Tewari2016,
+)
+from crossbridge import rice2008
+from crossbridge.rice2008 import _STATES
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
-WITH_ODE: list[type] = [Land2017, Lewalle2024, RDQ20MF, Tewari2016, Marzban2020, Musgrave2025]
+WITH_ODE: list[type] = [
+    Land2017,
+    Lewalle2024,
+    RDQ20MF,
+    Tewari2016,
+    Marzban2020,
+    Musgrave2025,
+    Rice2008,
+]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
     Lewalle2024: ("Ta", "Ka", "bound_ca", "Tp"),
@@ -27,9 +45,12 @@ OUTPUTS: dict[type, tuple[str, ...]] = {
     Tewari2016: ("Ta", "Ka", "bound_ca", "Tp"),
     Marzban2020: ("Ta", "Ka", "bound_ca", "Tp"),
     Musgrave2025: ("Ta", "Ka", "bound_ca", "Tp"),
+    Rice2008: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
+#: Parameters of a file that its class takes from the constructor instead, with their defaults.
+ODE_ONLY: dict[type, dict[str, float]] = {Rice2008: {"Ta_max": 1.0}}
 #: Class parameters that the file spells differently: key -> (ODE parameter, value map).
 SWITCHES: dict[str, tuple[str, dict[str, float]]] = {
     "which_dep": (
@@ -167,6 +188,7 @@ def test_parameters_match_default_parameters(cls):
     expected = {k: float(v) for k, v in defaults.items() if k not in NON_ODE | set(switches)}
     for key, (ode_name, mapping) in switches.items():
         expected[ode_name] = mapping[defaults[key]]
+    expected.update(ODE_ONLY.get(cls, {}))
     assert in_ode == expected
 
 
@@ -463,7 +485,8 @@ def test_rdq20mf_derivatives_match_its_ode():
         )
 
 
-#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025: titin on
+#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025 (and, but for
+#: the stretch, Rice2008): titin on
 #: both sides of SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and
 #: relengthening, and a stretch and a release at peak tension (t = 60-70 ms under
 #: `_inputs(..., cmax=3.0)`). For Musgrave2025, below_rest leaves no head in reach, and
@@ -826,6 +849,195 @@ def test_musgrave2025_derivatives_match_its_ode():
         np.testing.assert_allclose(
             monitors[ns["monitor_index"](out)],
             getattr(model, method)(),
+            rtol=1e-12,
+            atol=1e-13,
+            err_msg=out,
+        )
+
+
+#: Rice2008's parameters off their defaults, no two of them equal (each within about +-20% of
+#: its default, so that a twitch still activates; TmpC and SL0 included), passed to the class
+#: and to the file alike: a swapped parameter, or one written as its default, shows.
+RICE_OFF_DEFAULTS = {
+    "SL0": 2.0,
+    "TmpC": 30.0,
+    "len_thick": 1.7,
+    "len_hbare": 0.12,
+    "len_thin": 1.15,
+    "kon": 55.0,
+    "koffL": 230.0,
+    "koffH": 27.0,
+    "koffmod": 0.95,
+    "perm50": 0.47,
+    "nperm": 13.0,
+    "kn_p": 460.0,
+    "kp_n": 56.0,
+    "Qkon": 1.45,
+    "Qkoff": 1.35,
+    "Qkn_p": 1.55,
+    "Qkp_n": 1.65,
+    "fapp": 540.0,
+    "gapp": 64.0,
+    "gslmod": 5.5,
+    "hf": 2150.0,
+    "hfmdc": 4.6,
+    "hb": 370.0,
+    "gxb": 76.0,
+    "sigmap": 7.4,
+    "sigman": 1.1,
+    "xbmodsp": 0.9,
+    "Qfapp": 5.9,
+    "Qgapp": 2.6,
+    "Qhf": 6.6,
+    "Qhb": 5.8,
+    "Qgxb": 6.5,
+    "x_0": 0.0075,
+    "xPsi": 2.2,
+    "SLrest": 1.85,
+    "PCon_t": 0.0024,
+    "PExp_t": 9.5,
+    "SL_c": 2.3,
+    "PCon_c": 0.018,
+    "PExp_c": 66.0,
+}
+
+
+#: Rice2008 against its file over the moment models' protocols (including `release_at_peak`),
+#: but for `stretch_at_peak`, and a slower stretch in its place. Lengthening 0.2 um in 4 ms
+#: (50 um/s) takes the post-rotated strain past 6 x_0, where the exponent cap of gxbmd binds and
+#: the class's exponential no longer resolves the 1e20 /s detachment (class docstring: "outside
+#: the verified range"); class and file have the same right-hand side there
+#: (`test_rice2008_derivatives_match_its_ode` reaches the cap), and the class is 0.1-1.0 of the
+#: peak from the reference at every sub-step down to 1e-5 s. 10 um/s stays inside the range.
+RICE_PROTOCOLS = {
+    **{k: v for k, v in MOMENT_PROTOCOLS.items() if k != "stretch_at_peak"},
+    "slow_stretch_at_peak": lambda t: 2.0 + 0.1 * np.clip((t - 0.06) / 0.01, 0, 1),
+}
+#: The class's sub-step for the protocols that move SL. Its error against the reference is
+#: second order in the sub-step (at the default 1e-4 s, 1.9e-3 of the peak of Ka for
+#: `release_at_peak`, 2.3e-4 for the slow stretch; at 5e-5 s 3.9e-4 and 5.9e-5; at 2.5e-5 s
+#: 8.2e-5 and 1.5e-5, in the rabbit parameters 1.2e-4 and 1.8e-5), and the reference agrees
+#: with itself, so this is the class's integrator, which the file is not the cause of.
+RICE_FINE_SUBSTEP = 2e-5  # [s]
+
+
+@pytest.mark.parametrize("protocol", sorted(RICE_PROTOCOLS))
+def test_rice2008_matches_its_ode(protocol, monkeypatch):
+    if protocol in {"release_at_peak", "slow_stretch_at_peak"}:
+        monkeypatch.setattr(rice2008, "_TARGET_SUBSTEP", RICE_FINE_SUBSTEP)
+    Ca, SL, dSL = _inputs(RICE_PROTOCOLS[protocol], cmax=3.0)
+    errors = _trajectory_errors(Rice2008, {}, {}, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_rice2008_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    errors = _trajectory_errors(Rice2008, RICE_OFF_DEFAULTS, RICE_OFF_DEFAULTS, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+@pytest.mark.parametrize("protocol", ["isometric", "release_at_peak"])
+def test_rice2008_matches_its_ode_with_rabbit_parameters(protocol, monkeypatch):
+    if protocol == "release_at_peak":
+        monkeypatch.setattr(rice2008, "_TARGET_SUBSTEP", RICE_FINE_SUBSTEP)
+    params = Rice2008.rabbit_parameters()
+    ode_params = {k: v for k, v in params.items() if k not in NON_ODE}
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS[protocol], cmax=3.0)
+    errors = _trajectory_errors(Rice2008, params, ode_params, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_rice2008_states_match_its_ode():
+    """N_NoXB and P_NoXB feed no output, so compare every state, not only the outputs."""
+    Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["isometric"], cmax=3.0)
+    m = _module(Rice2008)
+    model = Rice2008(1)
+    names = [state.name for state in _load(Rice2008).states]
+    assert len(names) == 9
+    y = m["init_state_values"]()
+    for name in names:
+        y[m["state_index"](name)] = _state_of(model, name)
+    p = m["init_parameter_values"]()
+    iCa, iSL, idSL = (m["parameter_index"](n) for n in ("Ca", "SL", "dSL"))
+    got: dict[str, list[float]] = {name: [] for name in names}
+    ref: dict[str, list[float]] = {name: [] for name in names}
+    for k in range(len(Ca)):
+        model.advance_step(1e-3, Ca[k], SL[k], dSL_vals=dSL[k])
+        p[iCa], p[iSL], p[idSL] = Ca[k], SL[k], dSL[k]
+        y = solve_ivp(
+            lambda t, y: m["rhs"](t, y, p), (0, 1e-3), y, method="Radau", rtol=1e-11, atol=1e-13
+        ).y[:, -1]
+        for name in names:
+            got[name].append(_state_of(model, name))
+            ref[name].append(float(y[m["state_index"](name)]))
+    for name in names:
+        a, b = np.array(got[name]), np.array(ref[name])
+        peak = max(np.abs(b).max(), np.abs(a).max(), 1e-3)
+        assert np.abs(a - b).max() / peak < 1e-4, name
+
+
+def test_rice2008_derivatives_match_its_ode():
+    """
+    The class's linear system at a state is the file's right-hand side. 60 random states,
+    among them cells reaching each branch: permtot either side of 0.01, xXBpostr either side
+    of x_0, xXBprer of either sign, SL at 1.1 (no overlap), 1.3, 1.9 (SLrest), 2.25 (SL_c)
+    and 2.35, and the exponent caps of hfmd and gxbmd (the raw argument past 40). Each
+    branch is asserted to be reached.
+    """
+    rng = np.random.default_rng(2)
+    n = 60
+    model = Rice2008(n)
+    x_0 = model.p["x_0"]
+    x = np.vstack(
+        [
+            rng.uniform(size=n),  # TRPNCaH
+            rng.uniform(size=n),  # TRPNCaL
+            rng.uniform(size=n),  # N_NoXB
+            rng.uniform(size=n),  # P_NoXB
+            rng.uniform(0.0, 0.4, n),  # N
+            rng.uniform(0.0, 0.2, n),  # XBprer
+            rng.uniform(0.0, 0.2, n),  # XBpostr
+            rng.normal(scale=0.005, size=n),  # xXBprer
+            x_0 + rng.normal(scale=0.004, size=n),  # xXBpostr
+        ]
+    )
+    x[7, :2] = -0.05  # compressed: the raw argument of hfmd far past 40
+    x[8, 2:4] = (x_0 + 0.06, x_0 - 0.03)  # far from x_0, above and below: that of gxbmd
+    SL = rng.uniform(1.4, 2.4, n)
+    SL[4:9] = [1.1, 1.3, 1.9, 2.25, 2.35]
+    Ca = rng.uniform(0.0, 5.0, n)
+    dSL = rng.uniform(-3.0, 3.0, n)
+    model._set_x(x)
+    model._SL_curr = SL
+
+    _, SOVFthin = model._overlap(SL)
+    Tropreg = (1.0 - SOVFthin) * x[1] + SOVFthin * x[0]
+    T_n = Tropreg**15.0
+    permtot = np.sqrt(T_n / (T_n + 0.5**15.0))
+    assert np.any(permtot < 0.01) and np.any(permtot > 0.01)
+    assert np.any(x[8] < x_0) and np.any(x[8] > x_0)
+    assert np.any(x[7] < 0.0) and np.any(x[7] > 0.0)
+    assert model._overlap(SL)[0][4] == 0.0
+    hf_arg = -5.0 * x[7] * np.abs(x[7]) / x_0**2
+    gxb_arg = np.where(x[8] < x_0, 8.0, 1.0) * ((x[8] - x_0) / x_0) ** 2
+    assert np.all(hf_arg[:2] > 40.0) and np.all(gxb_arg[2:4] > 40.0)
+
+    M = model._system(Ca, dSL, model._rates(x, SL))
+    expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
+
+    ns = _module(Rice2008)
+    states = _states_by_name(ns, model)
+    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
+    rhs = ns["rhs"](0.0, states, params)
+    monitors = ns["monitor_values"](0.0, states, params)
+    for row, name in enumerate(_STATES):
+        np.testing.assert_allclose(
+            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+        )
+    for out in OUTPUTS[Rice2008]:
+        np.testing.assert_allclose(
+            monitors[ns["monitor_index"](out)],
+            getattr(model, GETTERS[out])(),
             rtol=1e-12,
             atol=1e-13,
             err_msg=out,

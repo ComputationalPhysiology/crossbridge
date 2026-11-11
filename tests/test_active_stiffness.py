@@ -35,16 +35,19 @@ from crossbridge import (
     Marzban2020,
     Musgrave2025,
     RDQ20MF,
+    Rice2008,
     Tewari2016,
 )
 
 # Models with genuine strain-rate feedback, for which R&Q Eq. (42) is exact.
-VELOCITY_DEPENDENT = [Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025]
+VELOCITY_DEPENDENT = [Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025, Rice2008]
 
 #: Step [s] of the finite difference below, where the default 1e-5 s is too long: the
 #: difference is first order in dt times the fastest rate, and Tewari2016's crossbridges
 #: cycle at up to ~4600 /s at 37.5 degC (1.3% at 1e-5 s, 0.13% at 1e-6 s).
-FD_DT = {Tewari2016: 1e-6}
+#: Rice2008's strain equations relax at ~900 /s at 22.5 degC, so 1e-5 s puts the difference
+#: near the 1% bound.
+FD_DT = {Tewari2016: 1e-6, Rice2008: 1e-6}
 
 N_CELLS = 4
 CA_ACTIVE = 2.0  # [uM], well above the diastolic level -- drives S, W up

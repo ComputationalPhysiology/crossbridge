@@ -119,6 +119,8 @@ Examples
 >>> Ta = model.get_active_tension()  # shape (10,), normalized force times Ta_max
 """
 
+from pathlib import Path
+
 import numpy as np
 import numpy.typing as npt
 
@@ -193,7 +195,7 @@ class Rice2008(CardiacActivationModel):
     Forces are the paper's normalized ones times `Ta_max`.
     """
 
-    ODE_FILE = None
+    ODE_FILE = Path(__file__).with_name("rice2008.ode")
 
     TRPNCaH: npt.NDArray[np.float64]
     TRPNCaL: npt.NDArray[np.float64]
