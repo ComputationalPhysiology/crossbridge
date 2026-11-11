@@ -110,17 +110,23 @@ def rice_calcium(
     Their Eqs. 54-55 (Table 3): ``diastolic`` until `t_start` [s], then
     ``diastolic + (amplitude - diastolic) / beta * (exp(-(t - t_start) / tau1)
     - exp(-(t - t_start) / tau2))``, a difference of exponentials that rises
-    with ``tau1`` and decays with ``tau2``. ``beta`` (negative) is the value
-    of that difference at its peak, so the transient peaks at exactly
+    with the shorter time constant and decays with the longer. ``beta`` is the
+    value of that difference at its peak, negative for ``tau1 < tau2`` (Table
+    3's) and positive for ``tau1 > tau2`` (with a long ``tau1``, a step that
+    rises with ``tau2``: the Rice2008 demo drives Figs. 4 and 8 with Data S1's
+    calcium steps this way), so the transient peaks at exactly
     `amplitude`, ``ln(tau2 / tau1) tau1 tau2 / (tau2 - tau1)`` (41.7 ms at the
     defaults) after `t_start`. The defaults are Table 3's 0.09 uM, 1.45 uM,
     20 ms and 110 ms, with the stimulus at t = 0 where the paper's figures
-    put it (the CellML has it at 5 ms).
+    put it (the CellML has it at 5 ms). ``tau1 == tau2`` raises `ValueError`:
+    the difference and ``beta`` are then both zero.
 
     Like `calcium_trace`, which has the same shape with other defaults, it is
     synthetic rather than measured calcium.
     """
     assert tau1 > 0 and tau2 > 0, "Time constants must be positive"
+    if tau1 == tau2:
+        raise ValueError(f"tau1 and tau2 must differ (both are {tau1} s): beta would be zero")
     ratio = tau1 / tau2
     beta = ratio ** (-1 / (ratio - 1)) - ratio ** (-1 / (1 - 1 / ratio))
     t = np.asarray(t, dtype=float)

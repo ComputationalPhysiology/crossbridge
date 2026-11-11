@@ -22,7 +22,7 @@ from crossbridge import (
     Rice2008,
     Tewari2016,
 )
-from crossbridge.rice2008 import _STATES
+from crossbridge.rice2008 import _EXP_ARG_MAX, _STATES
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
@@ -59,6 +59,9 @@ SWITCHES: dict[str, tuple[str, dict[str, float]]] = {
     "dep_k1ork2": ("dep_k1", {"k1": 1.0, "k2": 0.0}),
 }
 #: Where an output is compared against the class, and the floor of its peak [kPa, fraction].
+#: For Rice2008 the floors of Ta, Tp and Ka are in units of Ta_max (1, the paper's normalized
+#: force), not kPa: its Ta peaks at 0.44-0.91 in all but the two stretches, and its Tp always
+#: below 1, so those are held to an absolute 1e-4 of Ta_max rather than 1e-4 of their peaks.
 GETTERS = {
     "Ta": "get_active_tension",
     "Ka": "get_active_stiffness",
@@ -484,8 +487,8 @@ def test_rdq20mf_derivatives_match_its_ode():
         )
 
 
-#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025 (and, but for
-#: the stretch, Rice2008): titin on
+#: SL(t) [um] for the moment models, Tewari2016, Marzban2020 and Musgrave2025 (and Rice2008):
+#: titin on
 #: both sides of SL_rest (1.9), collagen above SL_collagen (2.25), a slow shortening and
 #: relengthening, and a stretch and a release at peak tension (t = 60-70 ms under
 #: `_inputs(..., cmax=3.0)`). For Musgrave2025, below_rest leaves no head in reach, and
@@ -901,17 +904,14 @@ RICE_OFF_DEFAULTS = {
 }
 
 
-#: Rice2008 against its file over the moment models' protocols, but for `stretch_at_peak`, and a
-#: slower stretch in its place. Lengthening 0.2 um in 4 ms (50 um/s), sustained, is excluded
-#: because the class does not converge to the model there (class docstring, "Sustained
-#: lengthening"): from the state at 60 ms, Radau and BDF (rtol 1e-11) agree on Ta over the next
-#: six 1 ms calls to 1e-9 (2.8283; LSODA fails to converge), and the class stays 0.80 of Ta
-#: away from them as its sub-step is forced from 1e-4 down to 1e-5, 2e-6 and 5e-7 s (0.801,
-#: 0.800, 0.799, 0.799), with its strain criterion off. The right-hand sides agree there
-#: (`test_rice2008_derivatives_match_its_ode` reaches the exponent caps). The slow stretch,
-#: 0.1 um in 10 ms, is inside the range; `tests/test_rice2008.py` pins the limit, 25 um/s.
+#: Rice2008 against its file over the moment models' protocols and a slower stretch, 0.1 um in
+#: 10 ms. `stretch_at_peak`, 0.2 um in 4 ms (50 um/s, sustained), is the case that set
+#: `_EXP_ARG_MAX` to 20 (class docstring): with a cap of 40 the dense 10x10 exponential of a
+#: sub-step was overscaled, and the class stayed 2.6 times the peak of Ta from the file at
+#: sub-steps of 1e-4, 1e-5 and 2e-6 s; with 20 it is 8.4e-6, 3.5e-7 and 2.2e-8, and the cap,
+#: which binds there (the raw argument of gxbmd reaches 125), changes Ta by 8.2e-9 of its peak.
 RICE_PROTOCOLS = {
-    **{k: v for k, v in MOMENT_PROTOCOLS.items() if k != "stretch_at_peak"},
+    **MOMENT_PROTOCOLS,
     "slow_stretch_at_peak": lambda t: 2.0 + 0.1 * np.clip((t - 0.06) / 0.01, 0, 1),
 }
 #: Bounds where Rice2008 is further than 1e-4 from the file at its shipped sub-steps, about 1.5
@@ -923,6 +923,8 @@ RICE_PROTOCOLS = {
 #: stretch 2.3e-4, 5.9e-5, 1.5e-5: second order) and with the velocity-driven sub-step count
 #: (`_STRAIN_PER_SUBSTEP` 0.2 instead of 0.35: 5.0e-4). At the shipped constants the release
 #: error is dominated by the release calls themselves (the worst are the first four, dSL = -25).
+#: The exponent cap does not bind in any of them (raw arguments at most 4.3 and, in the slow
+#: stretch, 14.9).
 RICE_BOUNDS = {
     ("default", "release_at_peak"): 2.8e-3,
     ("rabbit", "release_at_peak"): 3.7e-3,
@@ -986,8 +988,10 @@ def test_rice2008_derivatives_match_its_ode():
     The class's linear system at a state is the file's right-hand side. 60 random states,
     among them cells reaching each branch: permtot either side of 0.01, xXBpostr either side
     of x_0, xXBprer of either sign, SL at 1.1 (no overlap), 1.3, 1.9 (SLrest), 2.25 (SL_c)
-    and 2.35, and the exponent caps of hfmd and gxbmd (the raw argument past 40). Each
-    branch is asserted to be reached.
+    and 2.35, the exponent caps of hfmd and gxbmd (the raw argument past `_EXP_ARG_MAX`, so
+    the file's cap is the class's), and a negative calcium, which the class clamps in
+    `advance_step` and the file in `Max(Ca, 0)`. Each branch is asserted to be reached. The
+    outputs are compared at Ta_max 1 and 50, which scales Ta, Ka and Tp in both.
     """
     rng = np.random.default_rng(2)
     n = 60
@@ -1011,6 +1015,7 @@ def test_rice2008_derivatives_match_its_ode():
     SL = rng.uniform(1.4, 2.4, n)
     SL[4:9] = [1.1, 1.3, 1.9, 2.25, 2.35]
     Ca = rng.uniform(0.0, 5.0, n)
+    Ca[9] = -0.1  # an EP model's undershoot
     dSL = rng.uniform(-3.0, 3.0, n)
     model._set_x(x)
     model._SL_curr = SL
@@ -1025,25 +1030,31 @@ def test_rice2008_derivatives_match_its_ode():
     assert model._overlap(SL)[0][4] == 0.0
     hf_arg = -5.0 * x[7] * np.abs(x[7]) / x_0**2
     gxb_arg = np.where(x[8] < x_0, 8.0, 1.0) * ((x[8] - x_0) / x_0) ** 2
-    assert np.all(hf_arg[:2] > 40.0) and np.all(gxb_arg[2:4] > 40.0)
+    assert np.all(hf_arg[:2] > _EXP_ARG_MAX) and np.all(gxb_arg[2:4] > _EXP_ARG_MAX)
+    assert np.any(Ca < 0.0)
 
-    M = model._system(Ca, dSL, model._rates(x, SL))
+    # the calcium advance_step would pass on, clamped at zero
+    M = model._system(np.maximum(Ca, 0.0), dSL, model._rates(x, SL))
     expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
 
     ns = _module(Rice2008)
     states = _states_by_name(ns, model)
-    params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL)
-    rhs = ns["rhs"](0.0, states, params)
-    monitors = ns["monitor_values"](0.0, states, params)
-    for row, name in enumerate(_STATES):
-        np.testing.assert_allclose(
-            rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
-        )
-    for out in OUTPUTS[Rice2008]:
-        np.testing.assert_allclose(
-            monitors[ns["monitor_index"](out)],
-            getattr(model, GETTERS[out])(),
-            rtol=1e-12,
-            atol=1e-13,
-            err_msg=out,
-        )
+    for Ta_max in (1.0, 50.0):
+        scaled = Rice2008(n, Ta_max=Ta_max)
+        scaled._set_x(x)
+        scaled._SL_curr = SL
+        params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL, Ta_max=np.full(n, Ta_max))
+        rhs = ns["rhs"](0.0, states, params)
+        monitors = ns["monitor_values"](0.0, states, params)
+        for row, name in enumerate(_STATES):
+            np.testing.assert_allclose(
+                rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
+            )
+        for out in OUTPUTS[Rice2008]:
+            np.testing.assert_allclose(
+                monitors[ns["monitor_index"](out)],
+                getattr(scaled, GETTERS[out])(),
+                rtol=1e-12,
+                atol=1e-13 * Ta_max,
+                err_msg=f"{out} at Ta_max {Ta_max}",
+            )

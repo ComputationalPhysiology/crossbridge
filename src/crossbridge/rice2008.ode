@@ -124,12 +124,13 @@ dP_NoXB_dt = kn_pT * N_NoXB - kp_nT * P_NoXB
 dN_dt = -kn_pT * N + kp_nT * P
 
 expressions("crossbridge_rates")
-# The exponent arguments are capped at 40, a guard that keeps the class within the range of
-# expm_batch; it never binds in the verified range (class docstring).
+# The exponent arguments are capped at 20 (Rice2008._EXP_ARG_MAX), so that the class's
+# expm_batch does not overscale the slow blocks of its system; the cap binds only in fast
+# lengthening, where it changes the outputs by at most 1.1e-8 of their peaks (class docstring).
 gappT = gapp_base * (1.0 + (1.0 - SOVFthick) * gslmod)
-hfT = hf_base * exp(Min(-hfmdc * xXBprer * Abs(xXBprer) / (x_0 * x_0), 40.0))
+hfT = hf_base * exp(Min(-hfmdc * xXBprer * Abs(xXBprer) / (x_0 * x_0), 20.0))
 sigma = Conditional(Lt(xXBpostr, x_0), sigmap, sigman)
-gxbT = gxb_base * exp(Min(sigma * ((xXBpostr - x_0) / x_0) ** 2, 40.0))
+gxbT = gxb_base * exp(Min(sigma * ((xXBpostr - x_0) / x_0) ** 2, 20.0))
 D = fappT * gxbT + gappT * hbT + fappT * hbT + gappT * gxbT + fappT * hfT + gxbT * hfT
 
 expressions("crossbridges")

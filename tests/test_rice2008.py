@@ -115,10 +115,13 @@ def test_maximal_force_is_normalized():
     """
     Eq. 35 divides by the maximal XBpostr occupancy at the base rates, so maximal force is
     about 1 at 37 degC, where every Q factor is 1. The CellML reference at Ca 1e4 uM and SL
-    2.3 um gives 0.98787 at 37 degC and 0.92282 at 22.5 degC.
+    2.3 um gives 0.98787 at 37 degC and 0.92282 at 22.5 degC (where Data S1's F-Ca ramp
+    ends): maximal force rises with temperature, as the paper says.
     """
-    assert Ta_at(TmpC=37.0) == pytest.approx(0.98787, abs=2e-3)
-    assert Ta_at(TmpC=22.5) == pytest.approx(0.92282, abs=2e-3)
+    warm, cold = Ta_at(TmpC=37.0), Ta_at(TmpC=22.5)
+    assert warm == pytest.approx(0.98787, abs=2e-3)
+    assert cold == pytest.approx(0.92282, abs=2e-3)
+    assert cold < warm
 
 
 def test_ta_max_scales_the_outputs_exactly():
@@ -347,13 +350,13 @@ def test_state_moves_between_parameter_sets():
     assert np.all(np.isfinite(b.get_active_tension()))
 
 
-def _sustained_stretch(v, dt_call):
+def _sustained_stretch(v, dt_call, TmpC=22.5):
     """
     Ta, Ka and bound_ca after each 1 ms of: 60 ms isometric at 2 um with Ca rising at 20 ms,
     then 14 ms in which SL lengthens at `v` um/s for 4 ms and is held. The interval is split
     into calls of `dt_call`, so that a call of 1e-5 s is a sub-step of 1e-5 s.
     """
-    model = Rice2008(1)
+    model = Rice2008(1, params={"TmpC": TmpC})
     Ca = lambda t: calcium_trace(np.array([t]), c0=0.1, cmax=3.0, t0=0.02)[0]  # noqa: E731
     for k in range(60):
         model.advance_step(1e-3, Ca(k * 1e-3), 2.0, 0.0)
@@ -372,22 +375,28 @@ def _sustained_stretch(v, dt_call):
     return np.array(out)
 
 
-@pytest.mark.parametrize("v", [10.0, 20.0, 25.0])
-def test_sustained_lengthening_is_valid_up_to_25_um_per_s(v):
+@pytest.mark.parametrize(
+    "TmpC, v, bound",
+    [(22.5, 20.0, 1.3e-3), (22.5, 44.0, 2.2e-3), (22.5, 100.0, 2e-6), (37.0, 14.0, 2e-3)],
+)
+def test_sustained_lengthening_converges_to_the_model(TmpC, v, bound):
     """
-    The class docstring's limit for sustained lengthening (4 ms ramps from peak, 22.5 degC):
-    1 ms calls are within 1e-3 of the peak of a reference at 1e-5 s calls (measured 3.7e-4 at
-    10 um/s, 8.3e-4 at 20, 7.4e-5 at 25: not monotone), and that reference has converged
-    (2e-5 s calls are within 3.5e-5 of it, at most; asserted to 1e-4). Past 25 um/s the error
-    is 1.4e-3 at 27 um/s and 1.9e-2 at 30, and at 50 the class does not converge at all, which
-    is why the limit is stated and `stretch_at_peak` is not compared with the .ode.
+    The class docstring's sustained lengthening (4 ms ramps from peak tension, then held), at
+    the velocities of its largest errors and at 100 um/s. The reference is the class at
+    1e-5 s calls, which is within 2.4e-5 (22.5 degC) and 4.9e-5 (37 degC) of the peak of a
+    Radau solution of rice2008.ode (rtol 1e-11) at every velocity measured, 5-300 um/s;
+    `tests/test_ode_files.py` compares a 50 um/s stretch with Radau itself. 1 ms calls are
+    within `bound`, about 1.5 times the error measured: 8.3e-4 at 20 um/s (Ta) and 1.4e-3 at
+    44 (Ka), the worst at 22.5 degC, 1.3e-6 at 100 um/s, and 1.3e-3 at 14 um/s (Ta), the worst
+    at 37 degC. That error is the integrator's: 2e-5 s calls are within 1.0e-4 of the
+    reference (asserted to 2e-4).
     """
-    shipped = _sustained_stretch(v, 1e-3)
-    fine = _sustained_stretch(v, 2e-5)
-    finest = _sustained_stretch(v, 1e-5)
+    shipped = _sustained_stretch(v, 1e-3, TmpC)
+    fine = _sustained_stretch(v, 2e-5, TmpC)
+    finest = _sustained_stretch(v, 1e-5, TmpC)
     peak = np.abs(finest).max(axis=0)
-    assert np.all(np.abs(fine - finest).max(axis=0) / peak < 1e-4)
-    assert np.all(np.abs(shipped - finest).max(axis=0) / peak < 1e-3)
+    assert np.all(np.abs(fine - finest).max(axis=0) / peak < 2e-4)
+    assert np.all(np.abs(shipped - finest).max(axis=0) / peak < bound)
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +416,11 @@ def test_rice_calcium_table3():
     assert Ca[2] == pytest.approx(1.45, rel=1e-12)  # the peak is exactly the amplitude
     assert rice_calcium(np.linspace(0, 1, 100001)).max() == pytest.approx(1.45, rel=1e-8)
     assert Ca[3] == pytest.approx(0.09, abs=1e-3)
+
+
+def test_rice_calcium_rejects_equal_time_constants():
+    with pytest.raises(ValueError, match="must differ"):
+        rice_calcium(0.05, tau1=0.03, tau2=0.03)
 
 
 def _steady_state(Ca, SL, hold=1.0, **params):
@@ -606,12 +620,3 @@ def test_isometric_force_before_ktr_release():
     """Fig. 8, Ca 10 uM, SL 2.2 um, 20 degC: 0.80933 before the release (Data S1: 0.80933)."""
     F = _steady_state(10.0, 2.2, TmpC=20.0).get_active_tension()[0]
     assert F == pytest.approx(0.80933, abs=2e-3)
-
-
-def test_maximal_force_rises_with_temperature():
-    """Ca 1e4 uM, SL 2.3 um: 0.92282 at 22.5 degC (Data S1's F-Ca ramp ends), 0.98787 at 37."""
-    cold = _steady_state(1e4, 2.3, TmpC=22.5).get_active_tension()[0]
-    warm = _steady_state(1e4, 2.3, TmpC=37.0).get_active_tension()[0]
-    assert cold == pytest.approx(0.92282, abs=2e-3)
-    assert warm == pytest.approx(0.98787, abs=2e-3)
-    assert cold < warm

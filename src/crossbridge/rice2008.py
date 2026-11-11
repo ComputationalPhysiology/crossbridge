@@ -52,13 +52,43 @@ range: the overlap length is floored at zero, since the formula of Eqs.
 42-46 turns negative below SL = ``len_thin`` (1.2 um, under the paper's
 minimum of 1.4); calcium is clamped at zero on input, as an EP model's
 undershoot can make it slightly negative; and the exponent arguments of
-``hfmd`` and ``gxbmd`` (Eqs. 22 and 24) are capped at ``_EXP_ARG_MAX`` (40).
-Without that cap, strains past about 10 ``x_0`` drive Eq. 30's coefficient
-times the sub-step beyond the range of the matrix exponential (norms up to
-1.7e38, where `expm_batch` stops squaring), and the result is NaN; with both
-exponents at 40 it stays below 1e34 at the default rates. The cap binds only at strains 2-6
-``x_0`` or more from their isometric values, and never inside the verified
-range below, where the largest argument reached is 11.
+``hfmd`` and ``gxbmd`` (Eqs. 22 and 24) are capped at ``_EXP_ARG_MAX`` (20),
+for the integrator below. Over a sub-step the frozen-rate system is
+block-diagonal, its blocks (troponin, the units outside the overlap, the
+occupancies, the strains) coupled only through the rates, but it is
+exponentiated as one dense 10 x 10 matrix, and `expm_batch` scales and
+squares each matrix with a single exponent set by its norm. The strain
+coefficients of Eq. 30 grow with ``gxbT``, exponential in the squared strain,
+and once they dominate the norm the slow blocks are overscaled: their
+increments fall below the rounding of the squarings, an error that does not
+shrink with the sub-step. With a cap of 40, a 50 um/s stretch from peak
+tension (``stretch_at_peak`` in ``tests/test_ode_files.py``) took ``gxbT``
+to 1.2e18 /s and the norm of the matrix times the sub-step to 8.5e14; one
+sub-step's occupancy block was then 0.027 from the same block exponentiated
+alone, and the class stayed 2.6 times the peak of Ta from a Radau solution of
+its equations at sub-steps of 1e-4, 1e-5 and 2e-6 s. With 20 that norm is
+1.8e6 (the block 3e-10 from its own exponential), and the class is 8.4e-6,
+3.5e-7 and 2.2e-8 from Radau: second order. Without a cap, strains past
+about 10 ``x_0`` take the norm past 1.7e38, where `expm_batch` stops
+squaring, and the result is NaN.
+
+The cap binds only in lengthening, once the post-rotated bridges are strained
+more than ``sqrt(20) x_0`` past ``x_0`` (``sigman = 1``): in sustained
+lengthening (4 ms ramps from peak tension) above about 20 um/s at 22.5 degC
+(the raw argument of ``gxbmd`` reaches 19.1 at 20 um/s and 30 at 25 um/s) and
+above about 70 um/s at 37 degC (12.9 at 60 um/s, 21.1 at 75), and in a single
+1 ms call from an activated state somewhere between 50 and 100 um/s at
+22.5 degC (11.0 at +50 um/s, 44.6 at +100). There detachment is all but
+instantaneous either
+way (``gxbT`` at least ``e^20`` times its base rate), and the outputs differ
+from the uncapped model's by at most 1.1e-8 of their peaks (Radau, 15-300 um/s
+at 22.5 and 37 degC: against no cap up to 50 um/s at 22.5 degC and 100 um/s
+at 37 degC, where float64 can still evaluate it, and against a cap of 40
+beyond). It does not bind in shortening within the range verified below:
+10 ms ramps at up to 100 um/s reach arguments of 3.4 (``hfmd``) and 5.7
+(``gxbmd``), one call at -300 um/s 4.4 and 7.1. Only in fast lengthening,
+then, and only by that much, does the cap make the class and its ``.ode``
+depart from the paper and the CellML.
 
 Two expressions are evaluated in forms that are the same algebra without a
 division that can be by zero: Eq. 10 as
@@ -91,53 +121,51 @@ largest value that keeps one 1 ms call within 1% of the same call at 1 us
 steps when shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC).
 Calcium, SL and dSL are held over the call.
 
-**Verified range.** From an activated state (Ca 2 uM, SL 2 um), one 1 ms
-call is within 0.9% (22.5 degC) and 0.25% (37 degC) of the same call at
-1 us steps -- which agree with a Radau solution of the CellML equations to
-3e-5 -- for shortening at up to 300 um/s (with SL held, up to the cap below)
-and lengthening at up to 50 um/s -- in a *single* call; sustained lengthening
-is narrower, below. Sustained shortening is within 2e-3 of Radau for 10 ms
-ramps at 1 ms calls up to 100 um/s, and a release at 25 um/s from peak
-tension, then held, is within 3.5e-4 of the peak of Ta (1.9e-3 of Ka) at the
-shipped constants, and 5.9e-4 (2.5e-3) with ``rabbit_parameters()`` (37 degC).
-At the shipped constants that error is dominated by the release calls
-themselves (the worst are the first four, which take 11 sub-steps of
-0.09 ms), so it is governed by the velocity-driven sub-step count:
-``_STRAIN_PER_SUBSTEP`` of 0.2 instead of 0.35 gives 5.0e-4 (Ka), and
-``_TARGET_SUBSTEP`` of 2e-5 s instead of 1e-4 gives 5.1e-5. The
-velocity-driven count is capped at
+**Verified range**, against a Radau solution of the ``.ode`` (the class's
+equations; rtol 1e-11 or tighter). From an activated state (Ca 2 uM, SL
+2 um), one 1 ms call is within 0.82% (22.5 degC) and 0.25% (37 degC) of it
+for shortening and lengthening at up to 300 um/s, and within 1.3e-4 at
+500 and 1000 um/s either way with SL held at 2 um (below the sub-step cap);
+the same call at 1 us steps is within 2.5e-5. Sustained shortening, 10 ms
+ramps at 25-100 um/s from peak tension at 2.2 or 2.3 um, at 1 ms calls, is
+within 1.8e-3 of the peak of Ta and 3.3e-3 of Ka at 22.5 degC (1.1e-3 and
+1.6e-3 at 37 degC), and a release at 25 um/s from peak tension, then held, is
+within 8.0e-4 of the peak of Ta (3.5e-4 of ``Ta_max``) and 1.9e-3 of Ka at
+the shipped constants, and 8.7e-4 (5.9e-4) and 2.5e-3 with
+``rabbit_parameters()`` (37 degC). At the shipped constants that error is
+dominated by the release calls themselves (the worst are the first four,
+which take 11 sub-steps of 0.09 ms), so it is governed by the
+velocity-driven sub-step count: ``_STRAIN_PER_SUBSTEP`` of 0.2 instead of
+0.35 gives 5.0e-4 (Ka), and ``_TARGET_SUBSTEP`` of 2e-5 s instead of 1e-4
+gives 5.1e-5. The velocity-driven count is capped at
 ``_MAX_STRAIN_SUBSTEPS`` (500) per call, which covers SL changing by
 500 x 0.35 x_0 = 1.2 um in one call, more than a sarcomere's working range;
-beyond it the sub-steps lengthen and the error grows without bound: the
-results stay finite but are meaningless (Ta of order 1e11 for a dSL of
-5000 um/s over one 1 ms call with SL held). Fast stretch is outside the
-verified range for a reason of the model's own: past a strain of a few
-``x_0`` (lengthening at 100 um/s for 1 ms) the post-rotated bridges detach at
-1e20 /s and more, and Eq. 30's coefficient ``xPsi hfT / dutypostr`` reaches
-1e21 /s, so that its right-hand side is a cancellation no solver resolves
-(the class is then 1.3% from Radau at 22.5 degC). Further out the exponent
-cap binds, and the results, though finite, are no longer the model's.
+beyond it the sub-steps lengthen and the error is no longer controlled. In
+shortening the results stay finite but become meaningless (Ta -255 against
+Radau's -3e-4 for a dSL of -5000 um/s over one 1 ms call with SL held, at
+22.5 degC); in lengthening, where the exponent cap bounds the rates, such a
+call stayed within 2e-4 of Radau up to 1e5 um/s.
 
-**Sustained lengthening is valid up to 25 um/s**, by the criterion of 1e-3 of
-the peak (22.5 degC, 4 ms ramps from peak tension at 1 ms calls, held after;
-the reference is the same class at 1e-5 s calls, which agrees with itself at
-2e-5 s to 3.5e-5 or better). The worst error over 5-25 um/s is 8.3e-4, of Ta at 20 um/s
-(5 um/s 7e-6, 10 3.7e-4, 15 6.9e-4, 22 1.4e-4, 25 7.4e-5, not monotone since
-the sub-step count steps with velocity); against Radau it is 8.4e-4 at
-20 um/s. Beyond 25 um/s it is not valid: 1.4e-3 at 27 and 1.9e-2 at 30
-(against Radau 8.6e-4, 5.6e-2), 8.4e-3 at 28 against Radau, and of the order
-of the peak at 29 and 50 um/s against Radau. Nor does the class converge to the
-model there: for a 4 ms ramp at 50 um/s, Radau and BDF agree on Ta to 1e-9
-while the class stays 0.80 of Ta away as its sub-step is cut from 1e-4 to
-5e-7 s, and LSODA fails. The scheme freezes the rates over a sub-step, but
-``gxbT`` grows exponentially with a strain that the model slaves almost
-instantly (``xPsi D / fappT`` reaches 1e17 /s and more), so no frozen-rate
-sub-step follows it.
+**Sustained lengthening** (4 ms ramps from peak tension, held after, at 1 ms
+calls) converges to the model at every velocity measured, 5-300 um/s at 22.5
+and 37 degC: at 1e-5 s calls the class is within 2.4e-5 (22.5 degC) and
+4.9e-5 (37 degC) of the peak of Radau. At the shipped sub-steps the error is
+the integrator's, second order in the sub-step and not monotone in velocity.
+By the criterion of 1e-3 of the peak there is no velocity limit, but a few
+narrow bands miss it, by up to half. At 22.5 degC the error is at most 8.4e-4
+up to 42 um/s (of Ta at 20 um/s; 5 um/s 7.8e-6, 10 3.7e-4, 25 9.7e-5, 30
+2.9e-4), up to 1.5e-3 at 43-45.5 um/s (of Ka, 1.45e-3 at 44 um/s, the worst),
+at most 7.9e-4 from 46 um/s on, and below 1e-5 from 49 to 300 um/s. At
+37 degC it reaches 1.1e-3 to 1.3e-3 at 13-16, 18-20 and 35-47 um/s (of Ta,
+1.29e-3 at 14 um/s) and is below 1e-3 at the other velocities measured.
 
 **What reproduces** (Rice et al. 2008, at 22.5 degC, Table 3's calcium transient,
-`rice_calcium`; ``tests/test_rice2008.py`` pins each model value). The model
-matches the authors' own XPP code (Data S1) to the precision of its sample
-outputs: the Fig. 5 twitch within 7e-6, the F-Ca ramp within 2.5e-5. Fits are
+`rice_calcium`; ``tests/test_rice2008.py`` pins each model value). The
+model's equations (the CellML's, and so the ``.ode``'s), solved with Radau at
+tight tolerances, match the authors' own XPP code (Data S1) to the precision
+of its sample outputs: the Fig. 5 twitch within 7e-6, the F-Ca ramp within
+2.5e-5. The class at 1 ms calls is within 2.1e-5 of such a solution on that
+twitch (1.6e-7 at 0.1 ms calls). Fits are
 ``F = Fmax / (1 + 10 ** (nH (pCa - pCa50)))``; steady states hold 1 s.
 
 * Fig. 3A, isosarcometric F-pCa (model; paper). SL 1.8 um: Fmax 0.532, pCa50
@@ -197,9 +225,10 @@ _STRAIN_PER_SUBSTEP = 0.35  # [-]
 #: Cap on the sub-steps one call takes for velocity (module docstring).
 _MAX_STRAIN_SUBSTEPS = 500
 
-#: Cap on the exponent arguments of hfmd and gxbmd (Eqs. 22, 24), a guard that
-#: keeps the system within the range of `expm_batch` (module docstring).
-_EXP_ARG_MAX = 40.0  # [-]
+#: Cap on the exponent arguments of hfmd and gxbmd (Eqs. 22, 24): it keeps the norm of a
+#: sub-step's matrix moderate, so that `expm_batch`'s one scaling exponent per matrix does not
+#: overscale its slow blocks (module docstring). It binds only in fast lengthening.
+_EXP_ARG_MAX = 20.0  # [-]
 
 #: The states, in the order of the linear system.
 _STATES = (
@@ -465,8 +494,8 @@ class Rice2008(CardiacActivationModel):
         fappT = np.full_like(SL, self._fappT, dtype=float)
         gappT = self._gapp * (1.0 + (1.0 - SOVFthick) * p["gslmod"])
         # exp(-sign(x) hfmdc (x / x_0)^2), the CellML's sign (module docstring);
-        # both exponents capped at _EXP_ARG_MAX, a guard far outside the
-        # verified range
+        # both exponents capped at _EXP_ARG_MAX, which binds only in fast
+        # lengthening (module docstring)
         hf_arg = -p["hfmdc"] * xpre * np.abs(xpre) / (x_0 * x_0)
         hfT = self._hf * np.exp(np.minimum(hf_arg, _EXP_ARG_MAX))
         hbT = np.full_like(SL, self._hbT, dtype=float)
