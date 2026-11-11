@@ -134,6 +134,40 @@ while the class stays 0.80 of Ta away as its sub-step is cut from 1e-4 to
 instantly (``xPsi D / fappT`` reaches 1e17 /s and more), so no frozen-rate
 sub-step follows it.
 
+**What reproduces** (Rice et al. 2008, at 22.5 degC, Table 3's calcium transient,
+`rice_calcium`; ``tests/test_rice2008.py`` pins each model value). The model
+matches the authors' own XPP code (Data S1) to the precision of its sample
+outputs: the Fig. 5 twitch within 7e-6, the F-Ca ramp within 2.5e-5. Fits are
+``F = Fmax / (1 + 10 ** (nH (pCa - pCa50)))``; steady states hold 1 s.
+
+* Fig. 3A, isosarcometric F-pCa (model; paper). SL 1.8 um: Fmax 0.532, pCa50
+  5.887, nH 6.72; SL 2.2 um: 0.833, 6.100, 7.35; SL 2.3 um: 0.922, 6.149,
+  7.59 (the dashed curve's nH is 7.6).
+* Fig. 3B, 2.2 um held by a series spring, ``Ta + Tp(SL) - Tp_titin(2.2) =
+  KSE (2.2 - SL)``, force ``KSE (2.2 - SL)``. KSE 50: pCa50 6.097, nH 7.16
+  (paper 6.1, 7.6); KSE 1: 6.004, 4.11 (paper 6.0, 4.0).
+* Fig. 3C, unloaded cell from 1.9 um, ``Ta + Tp = 0``: shortening has pCa50
+  5.980 and nH 2.77 (paper 5.9, 3.0), and the minimum SL is 1.436 um (paper
+  "1.4-1.5 um").
+* Fig. 5, 50%-to-50% twitch durations. Model: 0.1273 s for the dagger (SL
+  1.8 um, 1.45 uM), 0.1574 s for the circle (2.2 um, 0.85 uM), 0.2150 s for
+  the star (2.3 um, 1.45 uM; Data S1 gives 0.2150 s). The caption prints 0.140,
+  0.187 and 0.223 s, which the paper's own plotted curves contradict: they
+  cross 50% where the model does, at about 0.13, 0.16 and 0.21 s. The tests
+  do not compare with the caption.
+* Fig. 5, peaks. 5A star (2.3 um, 1.45 uM): 0.8256 at 0.1406 s (paper 0.825;
+  Data S1 on its 1 ms grid 0.8256 at 0.141 s). 5B was run at 2.2 um, as the
+  text says, not 2.3 um as the caption says: its peaks are 0.6930 (1.45 uM) and
+  0.0996 (0.85 uM), where the paper's figure reads about 0.69 and 0.10. Its six
+  peaks are the model's at 2.2 um.
+* Fig. 8, isometric force before the release (Ca 10 uM, SL 2.2 um, 20 degC):
+  0.80933, as in Data S1.
+* Maximal force (Ca 1e4 uM, SL 2.3 um) rises with temperature, as the paper
+  says: 0.92282 at 22.5 degC (where Data S1's F-Ca ramp ends), 0.98787 at
+  37 degC.
+
+The demo's mechanics figures (4, 6 and 7) are reported in the demo.
+
 Examples
 --------
 >>> import numpy as np

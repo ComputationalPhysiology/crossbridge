@@ -18,9 +18,10 @@ import warnings
 
 import numpy as np
 import pytest
+from scipy.optimize import curve_fit
 
 from crossbridge.rice2008 import _STATES, Rice2008
-from crossbridge.utils import calcium_trace
+from crossbridge.utils import calcium_trace, rice_calcium
 
 
 def _calcium(t):
@@ -387,3 +388,230 @@ def test_sustained_lengthening_is_valid_up_to_25_um_per_s(v):
     peak = np.abs(finest).max(axis=0)
     assert np.all(np.abs(fine - finest).max(axis=0) / peak < 1e-4)
     assert np.all(np.abs(shipped - finest).max(axis=0) / peak < 1e-3)
+
+
+# ---------------------------------------------------------------------------
+# The paper's numbers (Rice et al. 2008, Figs. 3, 5 and 8)
+#
+# The pins are from an independent Radau solution of the CellML equations in s at 22.5 degC,
+# which reproduces the authors' Data S1 outputs (Fig. 5 twitch within 7e-6, F-Ca ramp within
+# 2.5e-5, Fig. 8's force before the release exactly). The values marked "Data S1" below are
+# the authors' own.
+# ---------------------------------------------------------------------------
+
+
+def test_rice_calcium_table3():
+    t_peak = np.log(0.11 / 0.02) * 0.02 * 0.11 / (0.11 - 0.02)  # 0.0416716 s
+    Ca = rice_calcium(np.array([-0.1, 0.0, t_peak, 1.0]))
+    assert Ca[0] == Ca[1] == 0.09
+    assert Ca[2] == pytest.approx(1.45, rel=1e-12)  # the peak is exactly the amplitude
+    assert rice_calcium(np.linspace(0, 1, 100001)).max() == pytest.approx(1.45, rel=1e-8)
+    assert Ca[3] == pytest.approx(0.09, abs=1e-3)
+
+
+def _steady_state(Ca, SL, hold=1.0, **params):
+    """One cell per (Ca, SL) pair, held for `hold` s at 1 ms calls, in a single run."""
+    Ca, SL = np.broadcast_arrays(np.asarray(Ca, dtype=float), np.asarray(SL, dtype=float))
+    model = Rice2008(Ca.size, params=params)
+    for _ in range(round(hold / 1e-3)):
+        model.advance_step(1e-3, Ca.ravel(), SL.ravel(), 0.0)
+    return model
+
+
+def _hill(pCa, Fmax, pCa50, nH):
+    return Fmax / (1.0 + 10.0 ** (nH * (pCa - pCa50)))
+
+
+def _fit_hill(pCa, F):
+    p0 = [max(np.max(F), 1e-3), 6.0, 4.0]
+    return curve_fit(_hill, pCa, F, p0=p0)[0]
+
+
+@pytest.mark.parametrize(
+    "SL, Fmax, pCa50, nH",
+    [(1.8, 0.5319, 5.8866, 6.719), (2.2, 0.8331, 6.0999, 7.345), (2.3, 0.9216, 6.1493, 7.591)],
+)
+def test_force_pca_fig3a(SL, Fmax, pCa50, nH):
+    """Fig. 3A, isosarcometric F-pCa: the model's fits, and the paper's dashed nH of 7.6."""
+    pCa = np.linspace(4.5, 7.0, 26)
+    F = _steady_state(10.0 ** (6.0 - pCa), SL).get_active_tension()
+    fit = _fit_hill(pCa, F)
+    assert fit[0] == pytest.approx(Fmax, abs=0.005)
+    assert fit[1] == pytest.approx(pCa50, abs=0.02)
+    assert fit[2] == pytest.approx(nH, abs=0.25)
+    if SL == 2.3:
+        assert fit[2] == pytest.approx(7.6, abs=0.5)  # the paper's dashed curve
+
+
+def _zero(SL, g):
+    """Per row, the zero of the line through the pair of neighbours of the first sign change."""
+    out = np.empty(SL.shape[0])
+    for r, (x, y) in enumerate(zip(SL, g)):
+        up = np.nonzero((y[:-1] <= 0) & (y[1:] > 0))[0]
+        k = up[0] if up.size else int(np.argmin(np.abs(y[:-1]) + np.abs(y[1:])))
+        out[r] = x[k] - y[k] * (x[k + 1] - x[k]) / (y[k + 1] - y[k])
+    return out
+
+
+def _static_balances(pCa, residuals):
+    """
+    Sarcomere length at which each of `residuals` (functions of Ta, Tp and SL, increasing in
+    SL) vanishes, for every pCa, from steady states. Returns the lengths, and the passive
+    tension at 2.2 um.
+
+    The balance of Fig. 3B and 3C is a root in SL of the steady-state force, each evaluation
+    of which holds a cell for 1 s, so the root is found in three rounds of one vectorized run
+    each: a coarse grid (0.1 um) that brackets it, three lengths 0.01 um apart around the
+    interpolated root, and three lengths 0.005 um apart around that. Only the last round holds
+    1 s, the others 0.3 and 0.5 s, which place the next grid and nothing more. The root is the
+    linear interpolation (or extrapolation) over the last 0.005 um.
+    """
+    Ca = 10.0 ** (6.0 - pCa)[:, None]
+    coarse = np.round(np.arange(1.4, 2.2 + 1e-9, 0.1), 6)[None, :] * np.ones((pCa.size, 1))
+    model = _steady_state(Ca, coarse, hold=0.3)
+    Ta, Tp = model.get_active_tension(), model.get_passive_tension()
+    Ta, Tp = Ta.reshape(coarse.shape), Tp.reshape(coarse.shape)
+    preload = Tp[0, -1]  # at 2.2 um, titin only: collagen starts at 2.25
+    guess = [_zero(coarse, f(Ta, Tp, coarse, preload)) for f in residuals]
+
+    for half_width, hold in [(0.01, 0.5), (0.005, 1.0)]:
+        SL = np.concatenate(
+            [g[:, None] + half_width * np.array([-1.0, 0.0, 1.0]) for g in guess], axis=0
+        )
+        model = _steady_state(np.tile(Ca, (len(residuals), 1)), SL, hold=hold)
+        Ta, Tp = model.get_active_tension(), model.get_passive_tension()
+        Ta, Tp = Ta.reshape(SL.shape), Tp.reshape(SL.shape)
+        guess = [
+            _zero(
+                SL[i * pCa.size : (i + 1) * pCa.size],
+                f(
+                    Ta[i * pCa.size : (i + 1) * pCa.size],
+                    Tp[i * pCa.size : (i + 1) * pCa.size],
+                    SL[i * pCa.size : (i + 1) * pCa.size],
+                    preload,
+                ),
+            )
+            for i, f in enumerate(residuals)
+        ]
+    return guess, preload
+
+
+_PCA_3BC = np.linspace(5.0, 6.8, 19)
+
+
+@pytest.fixture(scope="module")
+def static_balances():
+    """Sarcomere lengths of Fig. 3B (KSE 50 and 1) and Fig. 3C, for `_PCA_3BC`."""
+    residuals = [
+        # a cell at 2.2 um with a series spring: Ta + Tp(SL) - Tp_titin(2.2) = KSE (2.2 - SL)
+        lambda Ta, Tp, SL, preload: Ta + Tp - preload - 50.0 * (2.2 - SL),
+        lambda Ta, Tp, SL, preload: Ta + Tp - preload - 1.0 * (2.2 - SL),
+        # an unloaded cell: Ta + Tp = 0
+        lambda Ta, Tp, SL, preload: Ta + Tp,
+    ]
+    return _static_balances(_PCA_3BC, residuals)[0]
+
+
+@pytest.mark.parametrize(
+    "i, KSE, pCa50, nH, paper",
+    [(0, 50.0, 6.097, 7.155, (6.1, 7.6)), (1, 1.0, 6.004, 4.107, (6.0, 4.0))],
+)
+def test_fixed_length_force_pca_fig3b(static_balances, i, KSE, pCa50, nH, paper):
+    """
+    Fig. 3B, a cell held at 2.2 um by a series spring of stiffness KSE: the sarcomere
+    shortens until ``Ta + Tp(SL) - Tp_titin(2.2) = KSE (2.2 - SL)``, and the force is
+    ``KSE (2.2 - SL)``. The preload is titin only, collagen being zero below 2.25 um.
+    """
+    fit = _fit_hill(_PCA_3BC, KSE * (2.2 - static_balances[i]))
+    assert fit[1] == pytest.approx(pCa50, abs=0.02)
+    assert fit[2] == pytest.approx(nH, abs=0.25)
+    assert fit[1] == pytest.approx(paper[0], abs=0.1)
+    assert fit[2] == pytest.approx(paper[1], abs=0.5)
+
+
+def test_unloaded_cell_shortening_fig3c(static_balances):
+    """
+    Fig. 3C, an unloaded cell starting from 1.9 um: it shortens until ``Ta + Tp = 0``, and
+    the Hill fit is to the shortening ``1.9 - SL``. The paper has "1.4-1.5 um" at full
+    activation.
+    """
+    SL = static_balances[2]
+    fit = _fit_hill(_PCA_3BC, 1.9 - SL)
+    assert fit[1] == pytest.approx(5.980, abs=0.02)
+    assert fit[2] == pytest.approx(2.772, abs=0.25)
+    assert fit[1] == pytest.approx(5.9, abs=0.1)
+    assert fit[2] == pytest.approx(3.0, abs=0.5)
+    assert SL.min() == pytest.approx(1.4362, abs=0.005)
+    assert 1.4 <= SL.min() <= 1.5
+
+
+# (SL [um], peak calcium [uM]) of the Fig. 5 twitches
+_TWITCHES = [(1.8, 1.45), (2.2, 0.85), (2.3, 1.45), (2.2, 1.45)]
+
+
+@pytest.fixture(scope="module")
+def twitches():
+    """Isometric twitches of `_TWITCHES`, 0.6 s from reset() at 1 ms calls: t, force (cells)."""
+    SL = np.array([s for s, _ in _TWITCHES])
+    amp = np.array([a for _, a in _TWITCHES])
+    model = Rice2008(len(_TWITCHES))
+    t = np.arange(601) * 1e-3
+    F = [model.get_active_tension()]
+    for k in range(600):
+        # calcium at the call's midpoint, as in _twitch_tension
+        Ca = rice_calcium((k + 0.5) * 1e-3, amplitude=amp)
+        model.advance_step(1e-3, Ca, SL, 0.0)
+        F.append(model.get_active_tension())
+    return t, np.array(F)
+
+
+def _duration_peak(t, F):
+    """50%-to-50% duration, peak and its time, interpolating the crossings linearly."""
+    half = 0.5 * F.max()
+    above = np.nonzero(F >= half)[0]
+    i, j = above[0], above[-1]
+    t_up = np.interp(half, [F[i - 1], F[i]], [t[i - 1], t[i]])
+    t_down = np.interp(half, [F[j + 1], F[j]], [t[j + 1], t[j]])
+    return t_down - t_up, F.max(), t[np.argmax(F)]
+
+
+def test_twitch_durations_fig5(twitches):
+    """
+    Fig. 5's 50%-to-50% twitch durations.
+
+    The caption's 0.140, 0.187 and 0.223 s are not used: the paper's own plotted curves
+    cross 50% at about 0.13, 0.16 and 0.21 s, where the model does, and Data S1 gives
+    0.2150 s for the last. 5B was run at 2.2 um, as the text says, not 2.3 um.
+    """
+    t, F = twitches
+    d = {c: _duration_peak(t, F[:, c])[0] for c in range(3)}
+    assert d[0] == pytest.approx(0.1273, abs=2e-3)  # SL 1.8, 1.45 uM
+    assert d[1] == pytest.approx(0.1574, abs=2e-3)  # SL 2.2, 0.85 uM
+    assert d[2] == pytest.approx(0.2150, abs=2e-3)  # SL 2.3, 1.45 uM (Data S1: 0.2150)
+    assert d[0] < d[1] < d[2]
+
+
+def test_twitch_peaks_fig5(twitches):
+    """Fig. 5's peaks; SL 2.3 / 1.45 uM is Data S1's sample twitch (0.8256 at 0.141 s)."""
+    t, F = twitches
+    _, peak, t_peak = _duration_peak(t, F[:, 2])
+    assert peak == pytest.approx(0.8256, abs=2e-3)
+    assert t_peak == pytest.approx(0.1406, abs=1e-3)
+    assert F[:, 3].max() == pytest.approx(0.6930, abs=2e-3)  # 5B, SL 2.2 / 1.45 uM: ~0.69
+    assert F[:, 1].max() == pytest.approx(0.0996, abs=2e-3)  # 5B, SL 2.2 / 0.85 uM: ~0.10
+    assert peak == pytest.approx(0.825, abs=0.01)  # 5A, read off the figure
+
+
+def test_isometric_force_before_ktr_release():
+    """Fig. 8, Ca 10 uM, SL 2.2 um, 20 degC: 0.80933 before the release (Data S1: 0.80933)."""
+    F = _steady_state(10.0, 2.2, TmpC=20.0).get_active_tension()[0]
+    assert F == pytest.approx(0.80933, abs=2e-3)
+
+
+def test_maximal_force_rises_with_temperature():
+    """Ca 1e4 uM, SL 2.3 um: 0.92282 at 22.5 degC (Data S1's F-Ca ramp ends), 0.98787 at 37."""
+    cold = _steady_state(1e4, 2.3, TmpC=22.5).get_active_tension()[0]
+    warm = _steady_state(1e4, 2.3, TmpC=37.0).get_active_tension()[0]
+    assert cold == pytest.approx(0.92282, abs=2e-3)
+    assert warm == pytest.approx(0.98787, abs=2e-3)
+    assert cold < warm
