@@ -268,6 +268,28 @@ def test_fast_cell_leaves_its_batch_mates_alone():
     assert batch.xXBprer[0] < 0.0 < batch.get_active_tension()[1]
 
 
+def test_strain_coefficients_survive_hfT_underflow():
+    """
+    Past about 12 x_0 of strain hfT underflows to zero, and dutypostr with it. Eqs. 29-30 are
+    written with the duty fractions multiplied out, so the system stays finite where the
+    CellML's xPsi / dutypostr * hfT is 0/0, and equals that form where both are defined.
+    """
+    model = Rice2008(2)
+    i, j = _STATES.index("xXBprer"), _STATES.index("xXBpostr")
+    x = model._get_x()
+    x[i], x[j] = [0.003, 13 * 0.007], [0.009, 14 * 0.007]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rates = model._rates(x, np.full(2, 2.2))
+        M = model._system(np.full(2, 2.0), np.array([-1.0, 300.0]), rates)
+    assert rates["hfT"][1] == 0.0 and rates["dutypostr"][1] == 0.0
+    assert np.all(np.isfinite(M))
+
+    xPsi, hbT, hfT = model.p["xPsi"], rates["hbT"][0], rates["hfT"][0]
+    np.testing.assert_allclose(M[0, i, j], xPsi / rates["dutyprer"][0] * hbT, rtol=1e-13)
+    np.testing.assert_allclose(M[0, j, i], xPsi / rates["dutypostr"][0] * hfT, rtol=1e-13)
+
+
 def test_velocity_estimated_from_successive_lengths():
     """With dSL_vals=None, dSL is (SL_k - SL_{k-1}) / dt, and zero on the first call."""
     estimated, explicit = Rice2008(2), Rice2008(2)

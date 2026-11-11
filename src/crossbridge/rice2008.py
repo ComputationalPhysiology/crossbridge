@@ -51,9 +51,14 @@ that the states are Table 2's and the CellML's, one for one.
 length is floored at zero, since the formula of Eqs. 42-46 turns negative
 below SL = ``len_thin`` (1.2 um, under the paper's minimum of 1.4), and
 calcium is clamped at zero on input, as an EP model's undershoot can make it
-slightly negative. Eq. 10 is evaluated as
-``sqrt(Tropreg^nperm / (Tropreg^nperm + perm50^nperm))``, the same function
-without its division by ``Tropreg``, which is zero without calcium.
+slightly negative. Two expressions are evaluated in forms that are the same
+algebra without a division that can be by zero: Eq. 10 as
+``sqrt(Tropreg^nperm / (Tropreg^nperm + perm50^nperm))``, without dividing by
+``Tropreg``, which is zero without calcium; and the strain coefficients of
+Eqs. 29-30 with the duty fractions of Eqs. 31-32 multiplied out,
+``xPsi / dutyprer = xPsi D / (fappT (hbT + gxbT))`` and
+``xPsi hfT / dutypostr = xPsi D / fappT`` (``D`` their common denominator),
+without dividing by ``dutypostr``, which is zero where ``hfT`` underflows.
 
 **Numerical scheme.** Given calcium, SL, dSL and the rates, the nine states
 obey a linear system (affine in the strains), which is solved exactly over a
@@ -72,10 +77,10 @@ the predictor misjudges, and with 0.1 ms sub-steps alone, shortening at
 100 um/s for 1 ms gave NaN. So each cell takes sub-steps of at most
 ``_TARGET_SUBSTEP`` and, when it moves fast, more of them, short enough that
 SL moves by at most ``_STRAIN_PER_SUBSTEP`` x_0 (0.35) in each -- a count of
-its own, so that its result does not depend on its batch-mates. 0.35 is the largest
-value that keeps one 1 ms call within 1% of the same call at 1 us steps when
-shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC). Calcium, SL and
-dSL are held over the call.
+its own, so that its result does not depend on its batch-mates. 0.35 is the
+largest value that keeps one 1 ms call within 1% of the same call at 1 us
+steps when shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC).
+Calcium, SL and dSL are held over the call.
 
 **Verified range.** From an activated state (Ca 2 uM, SL 2 um), one 1 ms
 call is within 0.9% (22.5 degC) and 0.25% (37 degC) of the same call at
@@ -91,8 +96,10 @@ the verified range for a reason of the model's own: past a strain of a few
 ``x_0`` (lengthening at 100 um/s for 1 ms) the post-rotated bridges detach at
 1e20 /s and more, and Eq. 30's coefficient ``xPsi hfT / dutypostr`` reaches
 1e21 /s, so that its right-hand side is a cancellation no solver resolves
-(the class is then 2% from Radau); past about 12 ``x_0``, ``hfT`` underflows
-and Eq. 30 is 0/0, NaN here as in the CellML.
+(the class is then 2% from Radau). Past about 10 ``x_0`` (lengthening at
+150 um/s for 1 ms at 22.5 degC, 190 um/s at 37 degC) that coefficient times
+the sub-step leaves the range of the matrix exponential (norms up to 1.7e38)
+and the result is NaN.
 
 Examples
 --------
@@ -137,6 +144,15 @@ _TRPNCaH, _TRPNCaL, _N_NoXB, _P_NoXB, _N, _XBprer, _XBpostr, _xXBprer, _xXBpostr
 # The last row/column of the linear system carries the constant term.
 _ONE = 9
 _SIZE = 10
+
+
+def _cycle_denominator(fapp, gapp, hf, hb, gxb):
+    """
+    King-Altman denominator of the cycle P -> XBprer -> XBpostr -> P, which
+    sets the duty fractions (Eqs. 31-32) and, at the base rates, the maximal
+    occupancies (Eqs. 33-34).
+    """
+    return fapp * gxb + gapp * hb + fapp * hb + gapp * gxb + fapp * hf + gxb * hf
 
 
 class Rice2008(CardiacActivationModel):
@@ -225,7 +241,7 @@ class Rice2008(CardiacActivationModel):
         # Eqs. 33-34: the steady occupancies at the base rates, which
         # normalize force and the strongly bound fraction of Eq. 36.
         fapp, gapp, hf, hb, gxb = (p[k] for k in ("fapp", "gapp", "hf", "hb", "gxb"))
-        D0 = fapp * gxb + gapp * hb + fapp * hb + gapp * gxb + fapp * hf + gxb * hf
+        D0 = _cycle_denominator(fapp, gapp, hf, hb, gxb)
         self._XBprer_max = (fapp * hb + fapp * gxb) / D0
         self._XBpostr_max = fapp * hf / D0
 
@@ -381,9 +397,9 @@ class Rice2008(CardiacActivationModel):
         sigma = np.where(xpost < x_0, p["sigmap"], p["sigman"])
         gxbT = self._gxb * np.exp(sigma * ((xpost - x_0) / x_0) ** 2)
 
-        # Eqs. 31-32: steady fractions of the cycle in each attached state
-        # (King-Altman), which set how fast the strains relax.
-        D = fappT * gxbT + gappT * hbT + fappT * hbT + gappT * gxbT + fappT * hfT + gxbT * hfT
+        # Eqs. 31-32: steady fractions of the cycle in each attached state,
+        # which set how fast the strains relax.
+        D = _cycle_denominator(fappT, gappT, hfT, hbT, gxbT)
         return {
             "kn_pT": kn_pT,
             "kp_nT": kp_nT,
@@ -435,14 +451,19 @@ class Rice2008(CardiacActivationModel):
         # Eq. 17
         M[:, _XBpostr, _XBprer] = hfT
         M[:, _XBpostr, _XBpostr] = -hbT - gxbT
+        # Eqs. 29-30 with the duty fractions of Eqs. 31-32 multiplied out, which
+        # is the same algebra without dividing by a fraction that can underflow:
+        # xPsi / dutyprer = xPsi D / (fappT (hbT + gxbT)) and
+        # xPsi / dutypostr * hfT = xPsi D / fappT, finite where hfT underflows.
+        D = _cycle_denominator(fappT, gappT, hfT, hbT, gxbT)
         # Eq. 29: d xXBprer/dt = dSL/2 + xPsi/dutyprer (-fappT xXBprer
         #                          + hbT (xXBpostr - x_0 - xXBprer))
-        a = xPsi / rates["dutyprer"]
+        a = xPsi * D / (fappT * (hbT + gxbT))
         M[:, _xXBprer, _xXBprer] = -a * (fappT + hbT)
         M[:, _xXBprer, _xXBpostr] = a * hbT
         M[:, _xXBprer, _ONE] = 0.5 * dSL - a * hbT * x_0
         # Eq. 30: d xXBpostr/dt = dSL/2 + xPsi/dutypostr hfT (xXBprer + x_0 - xXBpostr)
-        b = xPsi / rates["dutypostr"] * hfT
+        b = xPsi * D / fappT
         M[:, _xXBpostr, _xXBprer] = b
         M[:, _xXBpostr, _xXBpostr] = -b
         M[:, _xXBpostr, _ONE] = 0.5 * dSL + b * x_0
