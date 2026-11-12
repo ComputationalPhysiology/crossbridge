@@ -272,6 +272,84 @@ def test_fast_cell_leaves_its_batch_mates_alone():
     assert batch.xXBprer[0] < 0.0 < batch.get_active_tension()[1]
 
 
+def test_substep_is_the_exponential_midpoint_of_its_system():
+    """
+    A sub-step exponentiates `_system` block by block (module docstring), which is exact
+    because no entry couples two blocks: it is the exponential midpoint of the whole 10 x 10
+    system, here in 50-digit arithmetic. 60 random states with strains up to 3 x_0 from their
+    isometric values, which take both exponent caps (the norm of the matrix times the
+    sub-step reaches 9e13), calcium from none to saturating, SL from 1.3 to 2.4 um,
+    velocities to 50 um/s either way and sub-steps from 1e-6 to 1e-4 s. The block-wise step
+    is within 4e-16 of it; the dense 10 x 10 `expm_batch` step it replaced was 6.1e-7 off.
+    """
+    mpmath = pytest.importorskip("mpmath")
+    mpmath.mp.dps = 50
+
+    rng = np.random.default_rng(5)
+    n = 60
+    model = Rice2008(n)
+    x_0 = model.p["x_0"]
+    x = np.vstack(
+        [
+            rng.uniform(size=n),  # TRPNCaH
+            rng.uniform(size=n),  # TRPNCaL
+            rng.uniform(size=n),  # N_NoXB
+            rng.uniform(size=n),  # P_NoXB
+            rng.uniform(0.0, 0.6, n),  # N
+            rng.uniform(0.0, 0.2, n),  # XBprer
+            rng.uniform(0.0, 0.2, n),  # XBpostr
+            rng.uniform(-3.0, 3.0, n) * x_0,  # xXBprer
+            x_0 + rng.uniform(-3.0, 3.0, n) * x_0,  # xXBpostr
+        ]
+    )
+    Ca = np.concatenate([[0.0, 1e4], rng.uniform(0.0, 5.0, n - 2)])
+    SL = rng.uniform(1.3, 2.4, n)
+    dSL = rng.uniform(-50.0, 50.0, n)
+    h = 10.0 ** rng.uniform(-6.0, -4.0, n)
+
+    def exp_step(x_rates, step):
+        M = model._system(Ca, dSL, model._rates(x_rates, SL)) * step[:, None, None]
+        x1 = np.vstack([x, np.ones(n)])
+        E = [mpmath.expm(mpmath.matrix(M[i].tolist())) for i in range(n)]
+        return np.array([(np.array(E[i].tolist(), dtype=float) @ x1[:, i])[:9] for i in range(n)]).T
+
+    norm = np.abs(model._system(Ca, dSL, model._rates(x, SL))).sum(axis=2).max(axis=1) * h
+    assert norm.max() > 1e13
+    expected = exp_step(exp_step(x, 0.5 * h), h)
+    actual = model._advance(x.copy(), Ca, SL, dSL, h)
+    for row, name in enumerate(_STATES):
+        scale = 1.0 if row < _STATES.index("xXBprer") else x_0
+        np.testing.assert_allclose(
+            actual[row], expected[row], rtol=0, atol=1e-12 * scale, err_msg=name
+        )
+
+
+def test_system_is_block_diagonal():
+    """
+    The block-wise sub-step relies on `_system` coupling its blocks (troponin H, troponin L,
+    the units outside the overlap, the occupancies, the strains) through nothing but the
+    constant column, at any state, and on the occupancies' steady state solving their block.
+    """
+    rng = np.random.default_rng(6)
+    n = 20
+    model = Rice2008(n)
+    x = model._get_x() + rng.uniform(-0.1, 0.1, (9, n))
+    Ca, dSL, SL = rng.uniform(0.0, 5.0, n), rng.uniform(-50, 50, n), rng.uniform(1.3, 2.4, n)
+    rates = model._rates(x, SL)
+    M = model._system(Ca, dSL, rates)
+    blocks = [slice(0, 1), slice(1, 2), slice(2, 4), slice(4, 7), slice(7, 9)]
+    mask = np.ones((10, 10), dtype=bool)
+    for b in blocks:
+        mask[b, b] = False
+    mask[:, 9] = False
+    assert np.all(M[:, mask] == 0.0)
+    assert np.all(M[:, 9, :] == 0.0)
+
+    b = model._blocks(Ca, dSL, rates)
+    residual = np.einsum("nij,nj->ni", b.occ, b.occ_ss) + b.occ_c
+    np.testing.assert_allclose(residual, 0.0, atol=1e-12 * np.abs(b.occ).max())
+
+
 def test_strain_coefficients_survive_hfT_underflow():
     """
     Past about 12 x_0 of strain hfT underflows to zero, and dutypostr with it. Eqs. 29-30 are
