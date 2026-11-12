@@ -97,6 +97,44 @@ def janssen_calcium(t: float | np.ndarray, frequency: float) -> np.ndarray:
     return a / phi * np.exp(-b * (np.log(phi) + c) ** 2) + Ca0
 
 
+def rice_calcium(
+    t: float | np.ndarray,
+    amplitude: float = 1.45,
+    diastolic: float = 0.09,
+    tau1: float = 0.02,
+    tau2: float = 0.11,
+    t_start: float = 0.0,
+) -> np.ndarray:
+    """Calcium transient [uM] that drives the twitches of Rice et al. (2008).
+
+    Their Eqs. 54-55 (Table 3): ``diastolic`` until `t_start` [s], then
+    ``diastolic + (amplitude - diastolic) / beta * (exp(-(t - t_start) / tau1)
+    - exp(-(t - t_start) / tau2))``, a difference of exponentials that rises
+    with the shorter time constant and decays with the longer. ``beta`` is the
+    value of that difference at its peak, negative for ``tau1 < tau2`` (Table
+    3's) and positive for ``tau1 > tau2`` (with a long ``tau1``, a step that
+    rises with ``tau2``: the Rice2008 demo drives Figs. 4 and 8 with Data S1's
+    calcium steps this way), so the transient peaks at exactly
+    `amplitude`, ``ln(tau2 / tau1) tau1 tau2 / (tau2 - tau1)`` (41.7 ms at the
+    defaults) after `t_start`. The defaults are Table 3's 0.09 uM, 1.45 uM,
+    20 ms and 110 ms, with the stimulus at t = 0 where the paper's figures
+    put it (the CellML has it at 5 ms). ``tau1 == tau2`` raises `ValueError`:
+    the difference and ``beta`` are then both zero.
+
+    Like `calcium_trace`, which has the same shape with other defaults, it is
+    synthetic rather than measured calcium.
+    """
+    assert tau1 > 0 and tau2 > 0, "Time constants must be positive"
+    if tau1 == tau2:
+        raise ValueError(f"tau1 and tau2 must differ (both are {tau1} s): beta would be zero")
+    ratio = tau1 / tau2
+    beta = ratio ** (-1 / (ratio - 1)) - ratio ** (-1 / (1 - 1 / ratio))
+    t = np.asarray(t, dtype=float)
+    dt = np.maximum(t - t_start, 0.0)
+    pulse = (amplitude - diastolic) / beta * (np.exp(-dt / tau1) - np.exp(-dt / tau2))
+    return np.where(t > t_start, diastolic + pulse, diastolic)
+
+
 #: Fourier coefficients (a_j, j = 0..30; b_j, j = 1..30) [uM] of the 1 Hz human atrial
 #: calcium transients that drive the muscle models of Musgrave et al. (2025), fitted here
 #: to the 1 kHz traces of their code (github.com/JuliaMusgrave/AtrialModel_2025_Human).

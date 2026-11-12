@@ -51,6 +51,12 @@ musgrave2025
 .. automodule:: crossbridge.musgrave2025
     :members:
 
+rice2008
+--------
+
+.. automodule:: crossbridge.rice2008
+    :members:
+
 utils
 -----
 

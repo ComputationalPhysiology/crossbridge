@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025), all sharing one interface so they're swappable.
+- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025, Rice2008), all sharing one interface so they're swappable.
 - Published on PyPI as `crossbridge`.
 - Model background/references live in `docs/models/`, not README.md (kept short by design).
 
@@ -41,7 +41,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   distortion-decay models (`Land2017`, `Lewalle2024`) use `h*Tref/rs*(As*S + Aw*W)`; `RDQ20MF` uses
   `a_XB*frac_SO*(mu0_P + mu0_N)`; the strain-moment models (`Tewari2016`, `Marzban2020`) use
   `SL0*OV_thick*kstiff1*(p2_0 + p3_0)`; `Musgrave2025` (mean-strain states) uses
-  `SL0*rho_myo*K_myo*phi_v*(B + C)`; `RDQ18` is identically zero (no strain-rate feedback).
+  `SL0*rho_myo*K_myo*phi_v*(B + C)`; `Rice2008` uses
+  `Ta_max*SL0*SOVFthick*(XBprer + XBpostr)/(2*x_0*XBpostr_max)` (its overlap's own dependence on SL
+  is not part of `Ka`); `RDQ18` is identically zero (no strain-rate feedback).
   **Never hand-check a new `Ka` by eye** — `tests/test_active_stiffness.py` verifies it by finite
   difference against the model's own dynamics, which is the only thing that keeps it honest when
   the ODEs change later.
@@ -63,11 +65,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   whose thin filament relaxes in ~0.1 ms) about a predicted midpoint; both are second order.
   `Musgrave2025` does the same at 0.1 ms with its rates frozen, and splits a sub-step in which its
   free heads `A = max(0, Z - N - B - C)` come off the clamp at zero (without the split, a 0.2 ms
-  sub-step was first order there, 2e-4 from its `.ode`). RDQ20MF refreshes its
-  Ca-dependent rates every `freq_rates_update` (10) sub-steps and advances its crossbridges every
-  `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
+  sub-step was first order there, 2e-4 from its `.ode`). `Rice2008` sub-steps at 0.1 ms
+  (`_TARGET_SUBSTEP`, rates frozen at a predicted midpoint, second order) and more while the length
+  moves fast: at most `_STRAIN_PER_SUBSTEP` = 0.35 `x_0` of strain per sub-step, capped at
+  `_MAX_STRAIN_SUBSTEPS` (500) per call, each cell finishing at its own count so that its result
+  does not depend on its batch. Each sub-step exponentiates its system as one dense 10x10 matrix,
+  and `expm_batch` scales a matrix with one exponent, so stiff strain coefficients overscale the
+  slow blocks; `_EXP_ARG_MAX` (20) caps the hfmd/gxbmd exponents to keep that norm moderate. At 40
+  the class sat 2.6x Ta's peak from Radau in a 50 um/s stretch at every sub-step from 1e-4 to
+  2e-6 s alike, so **judge its accuracy against Radau of its `.ode`, not by self-convergence**.
+  With 20 it converges to the model at every velocity measured (sustained lengthening at 1 ms
+  calls within 1.5e-3 of the peak at 5-300 um/s; `tests/test_rice2008.py` pins the worst cases).
+  RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
+  advances its crossbridges every `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
-  `marzban2020.py`, `musgrave2025.py`) is self-contained and
+  `marzban2020.py`, `musgrave2025.py`, `rice2008.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
   `advance_step` is the portable cross-model entry point; some models also keep an original,
   more detailed entry point (e.g. `RDQ18.advance_ODE`).
@@ -92,7 +104,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   invariant that makes batching legitimate: a matrix alone and the same matrix inside a mixed-norm
   batch of thousands come back bit-identical.
 - **`.ode` files.** `src/crossbridge/land2017.ode`, `lewalle2024.ode`, `rdq20mf.ode`, `tewari2016.ode`,
-  `marzban2020.ode` and `musgrave2025.ode` (package data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
+  `marzban2020.ode`, `musgrave2025.ode` and `rice2008.ode` (package data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
   (C, Julia, UFL) and a caller can supply their inputs from another model. Each class points at
   its file through `ODE_FILE` (`ClassVar[Path | None]` on `CardiacActivationModel`: `None` there and
   on `RDQ18`). RDQ18 has none on purpose: its 2176 states are 64 families over 34 neighbouring
@@ -133,11 +145,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
   the same way.
   The Lewalle2024 cases take ~105 s of the suite's ~390 s (without numba), the Tewari2016 and Marzban2020 ones ~80 s,
-  Musgrave2025's ~45 s. These three are compared by trajectory over `MOMENT_PROTOCOLS` and off
+  Musgrave2025's ~45 s, Rice2008's ~25 s, and `tests/test_rice2008.py` ~48 s more (~36 s of it the paper tests). The moment models are compared by trajectory over `MOMENT_PROTOCOLS` and off
   their defaults (bound 1e-4, no exceptions; Musgrave2025 also with `diabetic_parameters()` and
   through its clamp), and by derivatives at random states that reach the branches no trajectory
   does (the `f(sigma)` floor, zero overlap, the clamp, the CaTn floor); for them the class's linear
-  system at a state *is* the right-hand side.
+  system at a state *is* the right-hand side. Rice2008 is the same over `RICE_PROTOCOLS`
+  (`MOMENT_PROTOCOLS`, the 50 um/s `stretch_at_peak` included, plus a slow stretch), off its
+  defaults (`RICE_OFF_DEFAULTS`) and with `rabbit_parameters()`, with bounded exceptions in
+  `RICE_BOUNDS` (`release_at_peak` 2.8e-3 and 3.7e-3 with rabbit parameters, the slow stretch
+  3.4e-4: the class's integrator, falling with its own sub-step, while Radau, BDF and LSODA agree
+  to 2e-10). Its `FLOOR` is in units of `Ta_max` (normalized force), so its Ta below 1 and its Tp
+  are held to an absolute 1e-4. `test_rice2008_states_match_its_ode` compares all nine states
+  (`N_NoXB`, `P_NoXB` feed no output, so the outputs alone would not), and
+  `test_rice2008_derivatives_match_its_ode` the right-hand sides at random states that reach each
+  branch, both exponent caps (past `_EXP_ARG_MAX`) and a negative calcium, at `Ta_max` 1 and 50.
 - **`rdq20mf.ode` is written by `tools/generate_rdq20mf_ode.py`** — change the generator and
   re-run it (`python3 tools/generate_rdq20mf_ode.py`), never edit the file;
   `tests/test_rdq20mf_ode_generator.py` fails if the two differ. States: `x_{a}{b}{c}{B}` is
@@ -149,8 +170,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   which `land2017.ode` and `lewalle2024.ode` need. Every test that needs it `importorskip`s it, so
   the suite passes without it, with those tests skipped; `tests/test_ode_file_attribute.py` and
   the generator test need no gotranx.
-- `Ta_max` semantics differ by model: `RDQ18` uses it directly
-  (`Ta_max * compute_permissivity()`); the others compute tension
+- `Ta_max` semantics differ by model: `RDQ18` and `Rice2008` use it directly
+  (`Ta_max * compute_permissivity()`; `Rice2008`'s `Ta`, `Ka` and `Tp` are the paper's normalized
+  force, ~1 at full activation at 37 °C, times `Ta_max`, default **1.0**, not kPa); the others compute tension
   intrinsically from their own params (`a_XB`/`Tref`/`kstiff1`,`kstiff2`) and only accept `Ta_max` for interface
   compatibility — check which applies before relying on it (`Musgrave2025`: `K_myo`, `rho_myo`).
 - `Land2017` is the un-amended base model; `Lewalle2024` extends it by replacing its ad hoc
@@ -175,14 +197,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   Table 2 via `km0 = 0` and Table 3's K, Figs. 8A-10A) are pinned by `tests/test_musgrave2025.py`;
   the demo also reproduces the Fig. 4 complex-modulus misfits (12.5/10.6 kPa) by linearizing the
   `.ode`, and the Fig. 7 work-loop energetics by force-clamping with `get_active_stiffness()`.
+- `Rice2008` (rat, Rice et al. 2008 Biophys J; the activation Tewari2016 builds on): where the paper and
+  its CellML disagree it takes `kn_p = 500`, `kp_n = 50` /s and Eq. 22's sign from the CellML, and
+  `SLrest = 1.9` um and `TmpC = 22.5` from the paper, every one also what the authors' own code (Data
+  S1) has. `N_NoXB`/`P_NoXB` are kept as states though they feed nothing. Departures from the CellML's
+  literal forms (the class docstring has most; `Max(Tropreg, 0)` is in the code only): division-safe strain coefficients, hfmd/gxbmd exponents capped at 20
+  (`_EXP_ARG_MAX`, for `expm_batch`'s scaling; it binds only in fast lengthening, changing the outputs
+  by ≤ 1.1e-8), `Max(Tropreg, 0)`, an overlap floor and a calcium clamp at
+  0. `tools/compare_rice2008_cellml.py` downloads the CellML and checks the `.ode` against it
+  (≤ 4.2e-14 at 200 random states, exit status 1 on a mismatch). The paper's mechanics (series
+  spring, afterload, unloaded cell) live in `demo/reproduce_figures_rice2008.py`, not the class; the
+  demo shows Fig. 5's caption durations contradicted by its own curves, 5B run at 2.2 um not 2.3, and
+  Fig. 4 not reproduced by Data S1 either. The model's equations (CellML/`.ode`, solved with Radau)
+  reproduce Data S1's sample outputs (twitch 7e-6, F-Ca ramp 2.5e-5), and the class at 1 ms calls is
+  2.1e-5 from that solution on the twitch; `tests/test_rice2008.py` pins each docstring claim.
 - `src/crossbridge/utils.py`: synthetic `calcium_trace()`/`sl_trace()` generators for tests/demos,
   not physiological data; `janssen_calcium(t, frequency)`, Marzban et al.'s fits to measured rat
   calcium transients at 2-10 Hz, which drive the Tewari2016/Marzban2020 demos and tests; and
   `musgrave_calcium(t, diabetic)`, a 30-harmonic Fourier fit to the 1 Hz human atrial transients
   of Musgrave et al.'s code (within 0.4%/1% of amplitude), so that the Apache-2.0 traces themselves
-  are not shipped in this MIT package.
+  are not shipped in this MIT package; and `rice_calcium(t, ...)`, Rice et al.'s Eqs. 54-55
+  difference-of-exponentials transient with Table 3's defaults, which drives the Rice2008 twitches.
 - `new_models/` and `beard-model/` (paper PDFs + reference ports; `beard-model/Rat-Cardiac-Energetic`
-  is the curated MATLAB code of Marzban2020) and root `main.py` are reference/scratch material,
+  is the curated MATLAB code of Marzban2020), `rice-code/` (the paper's Data S1, the authors' XPP
+  code for Rice2008; untracked, **no licence, never commit or copy from it**) and root `main.py` are reference/scratch material,
   not part of the installable package (`tool.setuptools.packages.find` only picks up `src/`) —
   treat `new_models/` as read-only ground truth when checking a port's numerics.
 

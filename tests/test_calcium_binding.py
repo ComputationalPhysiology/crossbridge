@@ -266,8 +266,9 @@ def test_rdq20mf_occupancy_is_a_marginal_of_the_ru_tensor():
 
 
 #: Calcium [uM] that saturates a model's binding sites, where 100 uM does not:
-#: Tewari2016's low-affinity troponin C has a K_d of about 31 uM at 37.5 degC.
-SATURATING_CA = {"Tewari2016": 1e4}
+#: Tewari2016's low-affinity troponin C has a K_d of about 31 uM at 37.5 degC; Rice2008's, about
+#: 6 uM at 22.5 degC, so that 100 uM fills only 94% of it.
+SATURATING_CA = {"Tewari2016": 1e4, "Rice2008": 1e4}
 
 
 @pytest.mark.parametrize("name,ModelClass", sorted(MODEL_REGISTRY.items()))
