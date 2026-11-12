@@ -69,11 +69,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   (`_TARGET_SUBSTEP`, rates frozen at a predicted midpoint, second order) and more while the length
   moves fast: at most `_STRAIN_PER_SUBSTEP` = 0.35 `x_0` of strain per sub-step, capped at
   `_MAX_STRAIN_SUBSTEPS` (500) per call, each cell finishing at its own count so that its result
-  does not depend on its batch. Each sub-step exponentiates its system as one dense 10x10 matrix,
-  and `expm_batch` scales a matrix with one exponent, so stiff strain coefficients overscale the
-  slow blocks; `_EXP_ARG_MAX` (20) caps the hfmd/gxbmd exponents to keep that norm moderate. At 40
-  the class sat 2.6x Ta's peak from Radau in a 50 um/s stretch at every sub-step from 1e-4 to
-  2e-6 s alike, so **judge its accuracy against Radau of its `.ode`, not by self-convergence**.
+  does not depend on its batch. Each sub-step exponentiates its system block by block, exact
+  because with the rates frozen the blocks share no entry: troponin, `N_NoXB`/`P_NoXB` and the 2x2
+  strains in closed form (Putzer), the 3x3 occupancies with `expm_batch` about their Markov chain
+  tree steady state (never singular, so no `solve_batch`, which would raise for the whole batch on
+  one NaN cell). `_blocks` is the one definition; `_system` assembles it into the dense matrix the
+  `.ode` derivative test pins, and `test_substep_is_the_exponential_midpoint_of_its_system` pins
+  the step to that matrix's exponential in 50-digit mpmath. At 31920 cells a 1 ms call takes
+  ~0.10 s with numba and ~0.66 s without, against ~2.8 s for the one dense 10x10 exponential it
+  replaced, whose single scaling exponent let the stiff strain coefficients overscale the slow
+  blocks. `_EXP_ARG_MAX` (20), the cap on the hfmd/gxbmd exponents, was chosen against that
+  overscaling and stays as part of the model and its `.ode`: at 40 the dense step sat 2.6x Ta's
+  peak from Radau in a 50 um/s stretch at every sub-step from 1e-4 to 2e-6 s alike, so **judge
+  its accuracy against Radau of its `.ode`, not by self-convergence**.
   With 20 it converges to the model at every velocity measured (sustained lengthening at 1 ms
   calls within 1.5e-3 of the peak at 5-300 um/s; `tests/test_rice2008.py` pins the worst cases).
   RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
@@ -85,8 +93,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   more detailed entry point (e.g. `RDQ18.advance_ODE`).
 - `src/crossbridge/_linalg.py`: batched `solve_batch` + `expm_batch` for the small dense systems of
   `Land2017` (3x3) and `Lewalle2024` (5x5), which solve for a steady state and exponentiate one
-  matrix per cell per sub-step — at organ scale (~32k cells/rank) those two lines were essentially
-  all of `advance_step`. `expm_batch` exists rather than calling `scipy.linalg.expm` on the stack
+  matrix per cell per sub-step (`Rice2008` uses `expm_batch` alone, for its 3x3 occupancies) — at
+  organ scale (~32k cells/rank) those two lines were essentially all of `advance_step`. `expm_batch` exists rather than calling `scipy.linalg.expm` on the stack
   because each matrix must keep **its own** scaling-and-squaring exponent: cell norms span decades
   (`CaTRPN ** (-nTm / 2)`), so one shared exponent loses the cells far from the dominant norm, and
   scipy's stacked mode is a Python loop internally anyway. `solve_batch` is just LAPACK's algorithm
@@ -145,7 +153,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   error shrinks with its own step. Treat a new mismatch as a transcription error until it is shown
   the same way.
   The Lewalle2024 cases take ~105 s of the suite's ~390 s (without numba), the Tewari2016 and Marzban2020 ones ~80 s,
-  Musgrave2025's ~45 s, Rice2008's ~25 s, and `tests/test_rice2008.py` ~48 s more (~36 s of it the paper tests). The moment models are compared by trajectory over `MOMENT_PROTOCOLS` and off
+  Musgrave2025's ~45 s, Rice2008's ~28 s, and `tests/test_rice2008.py` ~35 s more (~21 s of it the paper tests). The moment models are compared by trajectory over `MOMENT_PROTOCOLS` and off
   their defaults (bound 1e-4, no exceptions; Musgrave2025 also with `diabetic_parameters()` and
   through its clamp), and by derivatives at random states that reach the branches no trajectory
   does (the `f(sigma)` floor, zero overlap, the clamp, the CaTn floor); for them the class's linear

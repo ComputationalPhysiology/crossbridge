@@ -52,25 +52,20 @@ range: the overlap length is floored at zero, since the formula of Eqs.
 42-46 turns negative below SL = ``len_thin`` (1.2 um, under the paper's
 minimum of 1.4); calcium is clamped at zero on input, as an EP model's
 undershoot can make it slightly negative; and the exponent arguments of
-``hfmd`` and ``gxbmd`` (Eqs. 22 and 24) are capped at ``_EXP_ARG_MAX`` (20),
-for the integrator below. Over a sub-step the frozen-rate system is
-block-diagonal, its blocks (troponin, the units outside the overlap, the
-occupancies, the strains) coupled only through the rates, but it is
-exponentiated as one dense 10 x 10 matrix, and `expm_batch` scales and
-squares each matrix with a single exponent set by its norm. The strain
-coefficients of Eq. 30 grow with ``gxbT``, exponential in the squared strain,
-and once they dominate the norm the slow blocks are overscaled: their
-increments fall below the rounding of the squarings, an error that does not
-shrink with the sub-step. With a cap of 40, a 50 um/s stretch from peak
-tension (``stretch_at_peak`` in ``tests/test_ode_files.py``) took ``gxbT``
-to 1.2e18 /s and the norm of the matrix times the sub-step to 8.5e14; one
-sub-step's occupancy block was then 0.027 from the same block exponentiated
-alone, and the class stayed 2.6 times the peak of Ta from a Radau solution of
-its equations at sub-steps of 1e-4, 1e-5 and 2e-6 s. With 20 that norm is
-1.8e6 (the block 3e-10 from its own exponential), and the class is 8.4e-6,
-3.5e-7 and 2.2e-8 from Radau: second order. Without a cap, strains past
-about 10 ``x_0`` take the norm past 1.7e38, where `expm_batch` stops
-squaring, and the result is NaN.
+``hfmd`` and ``gxbmd`` (Eqs. 22 and 24) are capped at ``_EXP_ARG_MAX`` (20).
+The cap was set for the integrator when a sub-step exponentiated the whole
+system as one dense 10 x 10 matrix, which `expm_batch` scales and squares with
+a single exponent set by its norm. The strain coefficients of Eq. 30 grow with
+``gxbT``, exponential in the squared strain, and once they dominated the norm
+the slow blocks were overscaled: their increments fell below the rounding of
+the squarings, an error that does not shrink with the sub-step. With a cap of
+40, a 50 um/s stretch from peak tension (``stretch_at_peak`` in
+``tests/test_ode_files.py``) took ``gxbT`` to 1.2e18 /s, and the class stayed
+2.6 times the peak of Ta from a Radau solution of its equations at sub-steps
+of 1e-4, 1e-5 and 2e-6 s; with 20 it was 8.4e-6, 3.5e-7 and 2.2e-8 from
+Radau: second order. The step is now block-wise (see the numerical scheme),
+each block scaled by its own norm, and the cap stays as part of the model and
+of its ``.ode``.
 
 The cap binds only in lengthening, once the post-rotated bridges are strained
 more than ``sqrt(20) x_0`` past ``x_0`` (``sigman = 1``): in sustained
@@ -101,25 +96,38 @@ without dividing by ``dutypostr``, which is zero where ``hfT`` underflows.
 
 **Numerical scheme.** Given calcium, SL, dSL and the rates, the nine states
 obey a linear system (affine in the strains), which is solved exactly over a
-sub-step with a matrix exponential of the system augmented by its constant
-term. The rates -- the N <-> P switch through the troponin occupancy, the
-isomerization and detachment through the strains, and the duty fractions
-through both -- are taken at the sub-step's midpoint, from a half-step
-predictor (the exponential midpoint rule), which keeps the error second order
-in the sub-step. The system is stiff (the authors used CVODE): ``kp_nT``
-reaches 2500 /s at 22.5 degC and 5000 /s at 37 degC when the filament is off,
-and at 37 degC the strains relax at about 10^4 /s; the exponential takes
-those exactly. What it cannot take exactly is the strain dependence of
-``hfT`` and ``gxbT``, exponential in the squared strain: a sub-step that
-moves the strain by a large fraction of ``x_0`` freezes them at a midpoint
-the predictor misjudges, and with 0.1 ms sub-steps alone, shortening at
-100 um/s for 1 ms gave NaN. So each cell takes sub-steps of at most
-``_TARGET_SUBSTEP`` and, when it moves fast, more of them, short enough that
-SL moves by at most ``_STRAIN_PER_SUBSTEP`` x_0 (0.35) in each -- a count of
-its own, so that its result does not depend on its batch-mates. 0.35 is the
+sub-step, block by block. With the rates frozen, troponin H, troponin L, the
+units outside the overlap, the occupancies and the strains share no entry of
+the system, so its exponential is theirs (``_blocks`` defines them;
+``_system`` assembles them into the matrix that ``tests/test_ode_files.py``
+pins to the ``.ode``). The first three relax as scalars (``N_NoXB + P_NoXB``
+is conserved) and take closed forms. The strains' 2 x 2 block, whose
+eigenvalues are real and negative, takes Putzer's closed form about its steady
+state. The occupancies' 3 x 3 block, whose eigenvalues can be complex (the
+cycle P -> XBprer -> XBpostr -> P turns one way), goes to `expm_batch`, about
+the steady state that the Markov chain tree theorem gives as a ratio of sums
+of positive rate products, never singular. Since each block is scaled by its
+own norm, the stiff strain coefficients cannot overscale the others: at random
+states that reach both exponent caps a sub-step is within 4e-16 of the
+exponential midpoint computed in 50-digit arithmetic, where the dense 10 x 10
+exponential this replaced was 6.1e-7 off. The rates -- the N <-> P switch
+through the troponin occupancy, the isomerization and detachment through the
+strains, and the duty fractions through both -- are taken at the sub-step's
+midpoint, from a half-step predictor (the exponential midpoint rule), which
+keeps the error second order in the sub-step. The system is stiff (the authors
+used CVODE): ``kp_nT`` reaches 2500 /s at 22.5 degC and 5000 /s at 37 degC
+when the filament is off, and at 37 degC the strains relax at about 10^4 /s;
+the exponential takes those exactly. What it cannot take exactly is the strain
+dependence of ``hfT`` and ``gxbT``, exponential in the squared strain: a
+sub-step that moves the strain by a large fraction of ``x_0`` freezes them at
+a midpoint the predictor misjudges, and with 0.1 ms sub-steps alone,
+shortening at 100 um/s for 1 ms gave NaN. So each cell takes sub-steps of at
+most ``_TARGET_SUBSTEP`` and, when it moves fast, more of them, short enough
+that SL moves by at most ``_STRAIN_PER_SUBSTEP`` x_0 (0.35) in each -- a count
+of its own, so that its result does not depend on its batch-mates. 0.35 is the
 largest value that keeps one 1 ms call within 1% of the same call at 1 us
-steps when shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC).
-Calcium, SL and dSL are held over the call.
+steps when shortening at 100 um/s (22.5 degC) and 150 um/s (37 degC). Calcium,
+SL and dSL are held over the call.
 
 **Verified range**, against a Radau solution of the ``.ode`` (the class's
 equations; rtol 1e-11 or tighter). From an activated state (Ca 2 uM, SL
@@ -207,6 +215,7 @@ Examples
 """
 
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -225,9 +234,9 @@ _STRAIN_PER_SUBSTEP = 0.35  # [-]
 #: Cap on the sub-steps one call takes for velocity (module docstring).
 _MAX_STRAIN_SUBSTEPS = 500
 
-#: Cap on the exponent arguments of hfmd and gxbmd (Eqs. 22, 24): it keeps the norm of a
-#: sub-step's matrix moderate, so that `expm_batch`'s one scaling exponent per matrix does not
-#: overscale its slow blocks (module docstring). It binds only in fast lengthening.
+#: Cap on the exponent arguments of hfmd and gxbmd (Eqs. 22, 24), part of the model and of its
+#: .ode; set against the overscaling of the dense exponential the block-wise step replaced
+#: (module docstring). It binds only in fast lengthening.
 _EXP_ARG_MAX = 20.0  # [-]
 
 #: The states, in the order of the linear system.
@@ -255,6 +264,29 @@ def _cycle_denominator(fapp, gapp, hf, hb, gxb):
     occupancies (Eqs. 33-34).
     """
     return fapp * gxb + gapp * hb + fapp * hb + gapp * gxb + fapp * hf + gxb * hf
+
+
+class _Blocks(NamedTuple):
+    """
+    The frozen-rate system d[x]/dt = A x + c of `Rice2008._system` by its diagonal blocks,
+    which share no entries (module docstring), with what the exact step of each needs.
+    Arrays have shape (n,), (n, k) or (n, k, k).
+    """
+
+    #: Troponin C: d TRPNCa/dt = konCa - k TRPNCa, k for the H and L sites, shape (2, n).
+    konCa: npt.NDArray[np.float64]
+    trpn_k: npt.NDArray[np.float64]
+    #: Units outside the single overlap: N_NoXB -> P_NoXB at kn_pT, back at kp_nT.
+    kn_pT: npt.NDArray[np.float64]
+    kp_nT: npt.NDArray[np.float64]
+    #: Occupancies (N, XBprer, XBpostr): A, c and the steady state -A^-1 c.
+    occ: npt.NDArray[np.float64]
+    occ_c: npt.NDArray[np.float64]
+    occ_ss: npt.NDArray[np.float64]
+    #: Strains (xXBprer, xXBpostr): A, c and det A.
+    xb: npt.NDArray[np.float64]
+    xb_c: npt.NDArray[np.float64]
+    xb_det: npt.NDArray[np.float64]
 
 
 class Rice2008(CardiacActivationModel):
@@ -518,6 +550,74 @@ class Rice2008(CardiacActivationModel):
             "dutypostr": fappT * hfT / D,
         }
 
+    def _blocks(
+        self,
+        Ca: npt.NDArray[np.float64],
+        dSL: npt.NDArray[np.float64],
+        rates: dict[str, npt.NDArray[np.float64]],
+    ) -> _Blocks:
+        """
+        The frozen-rate system by block: Eqs. 1-2, 7-8 and 14-17 with
+        P = 1 - N - XBprer - XBpostr, and Eqs. 29-30.
+        """
+        p = self.p
+        kn_pT, kp_nT = rates["kn_pT"], rates["kp_nT"]
+        fappT, gappT, hfT, hbT, gxbT = (rates[k] for k in ("fappT", "gappT", "hfT", "hbT", "gxbT"))
+        x_0, xPsi = p["x_0"], p["xPsi"]
+        konCa = self._konT * Ca
+        n = len(kn_pT)
+
+        # Eq. 14: dN/dt = -kn_pT N + kp_nT P
+        occ = np.zeros((n, 3, 3))
+        occ[:, 0, 0] = -kn_pT - kp_nT
+        occ[:, 0, 1] = occ[:, 0, 2] = -kp_nT
+        # Eq. 16: dXBprer/dt = fappT P - (gappT + hfT) XBprer + hbT XBpostr
+        occ[:, 1, 0] = -fappT
+        occ[:, 1, 1] = -fappT - gappT - hfT
+        occ[:, 1, 2] = -fappT + hbT
+        # Eq. 17
+        occ[:, 2, 1] = hfT
+        occ[:, 2, 2] = -hbT - gxbT
+        occ_c = np.stack([kp_nT, fappT, np.zeros(n)], axis=-1)
+        # The steady state of the cycle N <-> P -> XBprer -> XBpostr -> P by the Markov chain
+        # tree theorem: each state's weight is a sum of products of positive rates (T_P,
+        # T_pre and T_post are the King-Altman terms of D), so it is never singular and
+        # loses no digits to cancellation.
+        D = _cycle_denominator(fappT, gappT, hfT, hbT, gxbT)
+        T_P = gappT * gxbT + gappT * hbT + hfT * gxbT
+        T_pre, T_post = fappT * (hbT + gxbT), fappT * hfT  # D = T_P + T_pre + T_post
+        weights = np.stack([kp_nT * T_P, kn_pT * T_pre, kn_pT * T_post], axis=-1)
+        occ_ss = weights / (kp_nT * T_P + kn_pT * D)[:, None]
+
+        # Eqs. 29-30 with the duty fractions of Eqs. 31-32 multiplied out, which
+        # is the same algebra without dividing by a fraction that can underflow:
+        # xPsi / dutyprer = xPsi D / (fappT (hbT + gxbT)) and
+        # xPsi / dutypostr * hfT = xPsi D / fappT, finite where hfT underflows.
+        # Eq. 29: d xXBprer/dt = dSL/2 + xPsi/dutyprer (-fappT xXBprer
+        #                          + hbT (xXBpostr - x_0 - xXBprer))
+        a = xPsi * D / (fappT * (hbT + gxbT))
+        # Eq. 30: d xXBpostr/dt = dSL/2 + xPsi/dutypostr hfT (xXBprer + x_0 - xXBpostr)
+        b = xPsi * D / fappT
+        xb = np.empty((n, 2, 2))
+        xb[:, 0, 0] = -a * (fappT + hbT)
+        xb[:, 0, 1] = a * hbT
+        xb[:, 1, 0] = b
+        xb[:, 1, 1] = -b
+        xb_c = np.stack([0.5 * dSL - a * hbT * x_0, 0.5 * dSL + b * x_0], axis=-1)
+
+        return _Blocks(
+            konCa=konCa,
+            trpn_k=np.stack([konCa + self._koffHT, konCa + self._koffLT]),
+            kn_pT=kn_pT,
+            kp_nT=kp_nT,
+            occ=occ,
+            occ_c=occ_c,
+            occ_ss=occ_ss,
+            xb=xb,
+            xb_c=xb_c,
+            xb_det=a * b * fappT,
+        )
+
     def _system(
         self,
         Ca: npt.NDArray[np.float64],
@@ -525,55 +625,74 @@ class Rice2008(CardiacActivationModel):
         rates: dict[str, npt.NDArray[np.float64]],
     ) -> npt.NDArray[np.float64]:
         """
-        The (n, 10, 10) matrix of d[x, 1]/dt for frozen rates: Eqs. 1-2, 7-8
-        and 14-17 with P = 1 - N - XBprer - XBpostr, and Eqs. 29-30.
+        The (n, 10, 10) matrix of d[x, 1]/dt for frozen rates, assembled from `_blocks`: the
+        right-hand side that `tests/test_ode_files.py` pins to the .ode file.
         """
-        p = self.p
-        kn_pT, kp_nT = rates["kn_pT"], rates["kp_nT"]
-        fappT, gappT, hfT, hbT, gxbT = (rates[k] for k in ("fappT", "gappT", "hfT", "hbT", "gxbT"))
-        x_0, xPsi = p["x_0"], p["xPsi"]
-        konCa = self._konT * Ca
-
-        M = np.zeros((len(kn_pT), _SIZE, _SIZE))
-        # Eqs. 1-2: troponin C
-        M[:, _TRPNCaH, _TRPNCaH] = -konCa - self._koffHT
-        M[:, _TRPNCaH, _ONE] = konCa
-        M[:, _TRPNCaL, _TRPNCaL] = -konCa - self._koffLT
-        M[:, _TRPNCaL, _ONE] = konCa
-        # Eqs. 7-8: regulatory units outside the single overlap
-        M[:, _N_NoXB, _N_NoXB] = -kn_pT
-        M[:, _N_NoXB, _P_NoXB] = kp_nT
-        M[:, _P_NoXB, _N_NoXB] = kn_pT
-        M[:, _P_NoXB, _P_NoXB] = -kp_nT
-        # Eq. 14: dN/dt = -kn_pT N + kp_nT P
-        M[:, _N, _N] = -kn_pT - kp_nT
-        M[:, _N, _XBprer] = M[:, _N, _XBpostr] = -kp_nT
-        M[:, _N, _ONE] = kp_nT
-        # Eq. 16: dXBprer/dt = fappT P - (gappT + hfT) XBprer + hbT XBpostr
-        M[:, _XBprer, _N] = -fappT
-        M[:, _XBprer, _XBprer] = -fappT - gappT - hfT
-        M[:, _XBprer, _XBpostr] = -fappT + hbT
-        M[:, _XBprer, _ONE] = fappT
-        # Eq. 17
-        M[:, _XBpostr, _XBprer] = hfT
-        M[:, _XBpostr, _XBpostr] = -hbT - gxbT
-        # Eqs. 29-30 with the duty fractions of Eqs. 31-32 multiplied out, which
-        # is the same algebra without dividing by a fraction that can underflow:
-        # xPsi / dutyprer = xPsi D / (fappT (hbT + gxbT)) and
-        # xPsi / dutypostr * hfT = xPsi D / fappT, finite where hfT underflows.
-        D = _cycle_denominator(fappT, gappT, hfT, hbT, gxbT)
-        # Eq. 29: d xXBprer/dt = dSL/2 + xPsi/dutyprer (-fappT xXBprer
-        #                          + hbT (xXBpostr - x_0 - xXBprer))
-        a = xPsi * D / (fappT * (hbT + gxbT))
-        M[:, _xXBprer, _xXBprer] = -a * (fappT + hbT)
-        M[:, _xXBprer, _xXBpostr] = a * hbT
-        M[:, _xXBprer, _ONE] = 0.5 * dSL - a * hbT * x_0
-        # Eq. 30: d xXBpostr/dt = dSL/2 + xPsi/dutypostr hfT (xXBprer + x_0 - xXBpostr)
-        b = xPsi * D / fappT
-        M[:, _xXBpostr, _xXBprer] = b
-        M[:, _xXBpostr, _xXBpostr] = -b
-        M[:, _xXBpostr, _ONE] = 0.5 * dSL + b * x_0
+        b = self._blocks(Ca, dSL, rates)
+        occ, xb = slice(_N, _XBpostr + 1), slice(_xXBprer, _xXBpostr + 1)
+        M = np.zeros((len(b.kn_pT), _SIZE, _SIZE))
+        for row in (_TRPNCaH, _TRPNCaL):
+            M[:, row, row] = -b.trpn_k[row]
+            M[:, row, _ONE] = b.konCa
+        M[:, _N_NoXB, _N_NoXB] = -b.kn_pT
+        M[:, _N_NoXB, _P_NoXB] = b.kp_nT
+        M[:, _P_NoXB, _N_NoXB] = b.kn_pT
+        M[:, _P_NoXB, _P_NoXB] = -b.kp_nT
+        M[:, occ, occ] = b.occ
+        M[:, occ, _ONE] = b.occ_c
+        M[:, xb, xb] = b.xb
+        M[:, xb, _ONE] = b.xb_c
         return M
+
+    @staticmethod
+    def _exp_step(
+        x: npt.NDArray[np.float64], b: _Blocks, h: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]:
+        """
+        x, shape (9, n), after each cell's time h of the frozen-rate system: the exact
+        exponential of each block (module docstring), each cell's arithmetic its own.
+        """
+        out = np.empty_like(x)
+        # Troponin, and the units outside the overlap (whose N + P is conserved): scalar
+        # relaxations, x + (x_ss - x) (1 - e^(-k h)).
+        for row in (_TRPNCaH, _TRPNCaL):
+            k = b.trpn_k[row]
+            out[row] = x[row] + (b.konCa / k - x[row]) * -np.expm1(-k * h)
+        k = b.kn_pT + b.kp_nT
+        N, P = x[_N_NoXB], x[_P_NoXB]
+        dN = ((N + P) * (b.kp_nT / k) - N) * -np.expm1(-k * h)
+        out[_N_NoXB], out[_P_NoXB] = N + dN, P - dN
+
+        # Occupancies: x_ss + exp(A h) (x - x_ss), with `expm_batch` scaling each cell's 3 x 3
+        # matrix by its own norm.
+        E = expm_batch(b.occ * h[:, None, None])
+        d = x[_N : _XBpostr + 1].T - b.occ_ss
+        for i in range(3):
+            out[_N + i] = (
+                b.occ_ss[:, i] + E[:, i, 0] * d[:, 0] + E[:, i, 1] * d[:, 1] + E[:, i, 2] * d[:, 2]
+            )
+
+        # Strains: x_ss + exp(A h) (x - x_ss) in closed form, A = [[p, q], [r, s]]. A has real
+        # eigenvalues lam2 <= lam1 < 0: its discriminant ((p - s)/2)^2 + q r is a sum of
+        # non-negative terms and its determinant is positive. lam1 = det / lam2 avoids the
+        # cancellation of m + delta. By Putzer, exp(A h) = e^(lam1 h) (I + g (A - lam1 I)) with
+        # g = (1 - e^(-(lam1 - lam2) h)) / (lam1 - lam2), finite and accurate for any eigenvalue
+        # gap, however stiff.
+        pp, q, r, s = b.xb[:, 0, 0], b.xb[:, 0, 1], b.xb[:, 1, 0], b.xb[:, 1, 1]
+        c0, c1 = b.xb_c[:, 0], b.xb_c[:, 1]
+        ss0 = (q * c1 - s * c0) / b.xb_det
+        ss1 = (r * c0 - pp * c1) / b.xb_det
+        delta = np.sqrt((0.5 * (pp - s)) ** 2 + q * r)
+        lam2 = 0.5 * (pp + s) - delta
+        lam1 = b.xb_det / lam2
+        z = 2.0 * delta * h
+        tiny = z < 1e-8  # where 1 - z/2 is (1 - e^-z)/z to rounding
+        g = h * np.where(tiny, 1.0 - 0.5 * z, -np.expm1(-z) / np.where(tiny, 1.0, z))
+        e1 = np.exp(lam1 * h)
+        d0, d1 = x[_xXBprer] - ss0, x[_xXBpostr] - ss1
+        out[_xXBprer] = ss0 + e1 * ((1.0 + g * (pp - lam1)) * d0 + g * q * d1)
+        out[_xXBpostr] = ss1 + e1 * (g * r * d0 + (1.0 + g * (s - lam1)) * d1)
+        return out
 
     def _get_x(self) -> npt.NDArray[np.float64]:
         return np.stack([getattr(self, name) for name in _STATES])
@@ -594,18 +713,8 @@ class Rice2008(CardiacActivationModel):
         One exponential-midpoint sub-step; x has shape (9, n) and each cell
         its own length h, shape (n,).
         """
-        # [x, 1] per cell, contiguous: a stacked matmul then gives each cell the
-        # same arithmetic whatever its batch-mates (as in Tewari2016).
-        x1 = np.empty((x.shape[1], _SIZE, 1))
-        x1[:, :_ONE, 0] = x.T
-        x1[:, _ONE, 0] = 1.0
-
-        def solve(rates, step):
-            M = self._system(Ca, dSL, rates) * step[:, None, None]
-            return np.ascontiguousarray((expm_batch(M) @ x1)[:, :_ONE, 0].T)
-
-        x_half = solve(self._rates(x, SL), 0.5 * h)
-        return solve(self._rates(x_half, SL), h)
+        x_half = self._exp_step(x, self._blocks(Ca, dSL, self._rates(x, SL)), 0.5 * h)
+        return self._exp_step(x, self._blocks(Ca, dSL, self._rates(x_half, SL)), h)
 
     # ------------------------------------------------------------------
     # Public interface (CardiacActivationModel)
