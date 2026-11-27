@@ -140,8 +140,8 @@ def test_rdq20mf_matches_finite_difference():
       Eq. (52) omits (see `get_active_stiffness`). With it, the formula is
       exact and can be checked tightly rather than to a fudged tolerance.
     - The finite difference is taken across `_XB_advance` rather than
-      `advance_step`, because velocity only enters the model there, and
-      `advance_step` reaches it just once every `freqXB` calls.
+      `advance_step`, because velocity only enters the model there; across
+      `advance_step` the RU step would add its own, velocity-independent change.
     """
     model = RDQ20MF(num_cells=N_CELLS, params={"alpha": 0.0})
     for _ in range(400):

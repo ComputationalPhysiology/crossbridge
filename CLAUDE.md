@@ -85,7 +85,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   With 20 it converges to the model at every velocity measured (sustained lengthening at 1 ms
   calls within 1.5e-3 of the peak at 5-300 um/s; `tests/test_rice2008.py` pins the worst cases).
   RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
-  advances its crossbridges every `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
+  advances its crossbridges at every sub-step, exactly for the RU state held (closed form,
+  `_XB_advance`). It used to advance them every 40th sub-step with the velocity of that one call,
+  which missed or multiplied tenfold any length change shorter than 1 ms and made a 1 ms
+  staircase; `test_fast_stretch_response_does_not_depend_on_when_it_falls` pins the fix. Tests
+  that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
   `marzban2020.py`, `musgrave2025.py`, `rice2008.py`) is self-contained and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
@@ -143,10 +147,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   or hard-coded parameter shows, and Land2017 has a quick release that asserts it reaches
   `Zs < -1`. A file's computed initial CaTRPN is for the default parameters, so a case off them
   must start from the class's state.
-  RDQ20MF is compared by its derivatives at 50 states (rtol 1e-12), random apart from pinned `SL`
-  on every piece of `frac_SO` (asserted) and cells all in `x_0000` and in `x_1111` (the mean-field
-  denominators' fallbacks), because its multi-rate stepping sits ~0.5–0.8% (by protocol) from
-  its own ODE. The looser bounds (Land2017's zero-calcium `Ka`, 3e-3; six Lewalle2024
+  RDQ20MF is compared by trajectory over `RDQ20MF_PROTOCOLS` (bounds 3e-4 for `Ta`/`Ka`, 1e-3 for
+  `bound_ca`: its explicit-Euler RU step, measured 1.2–1.8e-4 and 5.3e-4) and by its derivatives at 50 states (rtol 1e-12), random apart from
+  pinned `SL` on every piece of `frac_SO` (asserted) and cells all in `x_0000` and in `x_1111`
+  (the mean-field denominators' fallbacks). The looser bounds (Land2017's zero-calcium `Ka`, 3e-3; six Lewalle2024
   force-feedback cases in `LEWALLE_BOUNDS`, 3e-4 to 9e-4, with the class at ten calls per 1 ms)
   are the **class's** integrator error, bounded from measurement after showing that
   the file is not the cause: the reference agrees across Radau, LSODA and BDF, and the class's
