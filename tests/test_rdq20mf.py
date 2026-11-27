@@ -9,6 +9,8 @@ Test philosophy mirrors test_rdq18.py:
   - Numerical: stability, crossbridge dynamics
 """
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -174,8 +176,8 @@ def test_active_tension_calcium_sensitivity(dt):
     Ca_high = np.array([3.0])
     Ca_low = np.array([0.1])
 
-    # Need enough steps to populate XBs (at least freqXB steps)
-    n_steps = model_high.freqXB * 100  # ~100 ms
+    # Enough steps to populate XBs
+    n_steps = round(0.1 / model_high.dt)  # 100 ms
     for _ in range(n_steps):
         model_high.advance_step(dt, Ca_high, SL, dSL)
         model_low.advance_step(dt, Ca_low, SL, dSL)
@@ -231,7 +233,7 @@ def test_active_tension_non_negative(dt):
     Ca = np.array([0.5, 1.0, 2.0])
     dSL = np.zeros(3)
 
-    n_steps = model.freqXB * 50
+    n_steps = round(0.05 / model.dt)
     for _ in range(n_steps):
         model.advance_step(dt, Ca, SL, dSL)
 
@@ -339,19 +341,17 @@ def test_frac_SO_range():
 # ---------------------------------------------------------------------------
 
 
-def test_xb_advances_after_freqXB_steps(dt):
-    """x_XB should be non-zero after enough steps to trigger XB advance."""
+def test_xb_advances_from_the_first_steps(dt):
+    """x_XB should be non-zero within a few steps: crossbridges advance at every sub-step."""
     model = RDQ20MF(num_cells=1)
     Ca = np.array([2.0])
     SL = np.array([2.2])
     dSL = np.array([0.0])
 
-    # Run for well past one freqXB period
-    for _ in range(model.freqXB * 3 + 1):
+    for _ in range(3):
         model.advance_step(dt, Ca, SL, dSL)
 
-    # XB should have populated
-    assert model.x_XB.sum() > 1e-8, f"x_XB still zero after {model.freqXB * 3} steps: {model.x_XB}"
+    assert model.x_XB.sum() > 0.0, f"x_XB still zero after 3 steps: {model.x_XB}"
 
 
 def test_xb_velocity_dependence(dt):
@@ -367,7 +367,7 @@ def test_xb_velocity_dependence(dt):
     dSL_zero = np.array([0.0])
     dSL_shortening = np.array([-0.5])  # shortening at 0.5 µm/s
 
-    n_steps = model_static.freqXB * 200
+    n_steps = round(0.2 / model_static.dt)
     for _ in range(n_steps):
         model_static.advance_step(dt, Ca, SL, dSL_zero)
         model_shortening.advance_step(dt, Ca, SL, dSL_shortening)
@@ -498,7 +498,7 @@ def test_get_active_tension_shape(model, dt):
     SL = np.full(model.num_cells, 2.2)
     dSL = np.zeros(model.num_cells)
 
-    for _ in range(model.freqXB * 5):
+    for _ in range(round(5e-3 / model.dt)):
         model.advance_step(dt, Ca, SL, dSL)
 
     Ta = model.get_active_tension()
@@ -524,3 +524,81 @@ def test_param_override():
     assert model.p["Koff"] == 200.0
     # Other keys should remain at defaults
     assert model.p["gamma"] == RDQ20MF.default_parameters()["gamma"]
+
+
+# ---------------------------------------------------------------------------
+# Crossbridges at every sub-step
+# ---------------------------------------------------------------------------
+
+
+def test_xb_advance_is_the_exponential_of_its_system():
+    """The closed-form crossbridge step equals scipy's matrix exponential of
+    `_XB_system`, at random RU states and velocities."""
+    from scipy.linalg import expm
+
+    rng = np.random.default_rng(1)
+    n = 20
+    model = RDQ20MF(num_cells=n)
+    x_RU = rng.uniform(size=(2, 2, 2, 2, n))
+    model.x_RU = x_RU / x_RU.sum(axis=(0, 1, 2, 3))
+    model.x_XB = rng.uniform(0.0, 0.3, size=(2, 2, n))
+    dSL = rng.uniform(-3.0, 3.0, size=n)
+    h = 2.5e-4
+
+    A, b = model._XB_system(dSL)
+    x0 = np.stack([model.x_XB[0, 0], model.x_XB[1, 0], model.x_XB[0, 1], model.x_XB[1, 1]], axis=-1)
+    x_inf = -np.linalg.solve(A, b[:, :, None])[:, :, 0]
+    ref = np.stack([x_inf[c] + expm(h * A[c]) @ (x0[c] - x_inf[c]) for c in range(n)])
+
+    model._XB_advance(dSL, h)
+    got = np.stack(
+        [model.x_XB[0, 0], model.x_XB[1, 0], model.x_XB[0, 1], model.x_XB[1, 1]], axis=-1
+    )
+    np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-15)
+
+
+def test_fast_stretch_response_does_not_depend_on_when_it_falls():
+    """A 0.1 % stretch in 0.1 ms, called every 50 µs, gives the same tension change
+    wherever it falls in time, and (without the velocity-dependent detachment that Ka
+    leaves out) the change Ka predicts.
+
+    The crossbridges used to advance once per millisecond with the velocity of the
+    call on which the update fell: this stretch was then missed, or applied for a
+    whole millisecond (ten times its size), depending on where it fell."""
+    model = RDQ20MF(num_cells=1, params={"alpha": 0.0})
+    for _ in range(3000):
+        model.advance_step(1e-3, 3.0, 2.2, 0.0)
+    eps, tau, SL0 = 1e-3, 1e-4, 2.2
+    v = eps * SL0 / tau
+    dT = []
+    for offset in range(0, 40, 3):  # delays of 0..39 sub-steps of dt_RU
+        m = copy.deepcopy(model)
+        for _ in range(offset):
+            m.advance_step(m.dt, 3.0, SL0, 0.0)
+        T0, Ka = m.get_active_tension()[0], m.get_active_stiffness()[0]
+        for i in range(2):
+            m.advance_step(tau / 2, 3.0, SL0 + v * tau / 2 * (i + 1), v)
+        dT.append((m.get_active_tension()[0] - T0) / (Ka * eps * SL0 / m.p["SL0"]))
+    np.testing.assert_allclose(dT, dT[0], rtol=1e-6)
+    assert abs(dT[0] - 1.0) < 0.05, dT[0]
+
+
+def test_tension_has_no_staircase():
+    """Through activation, tension changes at every step of dt_RU (no 1 ms plateaus)."""
+    model = RDQ20MF(num_cells=1)
+    Ta = []
+    for _ in range(round(0.02 / model.dt)):
+        model.advance_step(model.dt, 2.0, 2.2, 0.0)
+        Ta.append(model.get_active_tension()[0])
+    assert np.all(np.diff(Ta) > 0.0)
+
+
+def test_velocity_from_length_history():
+    """Without dSL_vals the velocity is the change of SL between calls: zero on the first
+    call (not a jump from the default SL0), and the same as passing it explicitly after."""
+    a, b = RDQ20MF(num_cells=1), RDQ20MF(num_cells=1)
+    SL = 2.0 + 0.1 * np.sin(np.linspace(0.0, 3.0, 200))
+    for k, sl in enumerate(SL):
+        a.advance_step(1e-3, 2.0, sl)
+        b.advance_step(1e-3, 2.0, sl, 0.0 if k == 0 else (sl - SL[k - 1]) / 1e-3)
+    np.testing.assert_allclose(a.x_XB, b.x_XB, rtol=1e-12, atol=1e-15)

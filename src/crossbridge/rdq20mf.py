@@ -17,8 +17,8 @@ The key features of the model are:
 
 - **Crossbridge cycling**: A 4-state (2x2) crossbridge model tracks the fraction
   of attached crossbridges in permissive (P) and non-permissive (N) states, with
-  velocity-dependent detachment. The XB sub-step is solved exactly using the
-  matrix exponential.
+  velocity-dependent detachment. The XB sub-system is linear with the RU state
+  held, and is advanced exactly, in closed form, at every RU sub-step.
 
 - **Length-dependent activation**: The overlap fraction `frac_SO(SL)` encodes
   the sarcomere length dependence of force, naturally reproducing the
@@ -56,7 +56,6 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from scipy.linalg import expm
 
 from .base import CardiacActivationModel
 
@@ -106,12 +105,10 @@ class RDQ20MF(CardiacActivationModel):
             self.p.update(params)
 
         self.dt = self.p["dt_RU"]
-        # XB sub-step frequency: advance XB every freqXB RU steps (every 1 ms)
-        self.freqXB: int = round(1e-3 / self.dt)
         # How often to recompute Ca-dependent rates (every 10 RU steps)
         self.freq_rates_update: int = round(2.5e-4 / self.dt)
 
-        # Internal step counter (for XB and rate update scheduling)
+        # Internal step counter (for the rate update schedule)
         self._step_count: int = 0
 
         # Precompute constant part of kT (shape: (2,2,2,2))
@@ -397,12 +394,10 @@ class RDQ20MF(CardiacActivationModel):
         diag_P = r + k_PN  # shape (num_cells,)
         diag_N = r + k_NP  # shape (num_cells,)
 
-        # Build and solve the 4x4 linear ODE for every cell at once (batched
-        # over the leading axis): d/dt [mu0_P, mu1_P, mu0_N, mu1_N]^T = A @ [...] + rhs
-        # where P=permissive, N=non-permissive, mu0/mu1=zeroth/first XB moment. This mirrors
-        # the per-cell system in the reference implementation without a
-        # Python-level loop over cells (np.linalg.solve and scipy.linalg.expm
-        # both operate on stacks of (num_cells, 4, 4) matrices).
+        # The 4x4 linear ODE for every cell at once (batched over the leading
+        # axis): d/dt [mu0_P, mu1_P, mu0_N, mu1_N]^T = A @ [...] + rhs, where
+        # P=permissive, N=non-permissive, mu0/mu1=zeroth/first XB moment. This
+        # mirrors the per-cell system in the reference implementation.
         A = np.zeros((self.num_cells, 4, 4))
         A[:, 0, 0] = -diag_P
         A[:, 0, 2] = k_NP
@@ -427,41 +422,62 @@ class RDQ20MF(CardiacActivationModel):
         dSL_dt: npt.NDArray[np.float64],
         dt_xb: float,
     ) -> None:
-        """
-        Advance the crossbridge state x_XB over dt_xb using the matrix exponential.
+        r"""
+        Advance the crossbridge state x_XB over dt_xb, exactly for the RU state held.
 
-        The XB sub-system for each cell is a linear 4-state ODE driven by the
-        current permissive fraction and permissive↔non-permissive exchange rates
-        from the RU state. The exact solution is computed via matrix exponential.
+        Ordered ``(mu0_P, mu0_N, mu1_P, mu1_N)``, the system of :meth:`_XB_system` is
+
+        .. math::
+            \frac{d}{dt}\begin{bmatrix} m_0 \\ m_1 \end{bmatrix}
+            = \begin{bmatrix} B & 0 \\ -v I & B \end{bmatrix}
+              \begin{bmatrix} m_0 \\ m_1 \end{bmatrix} + r,
+            \qquad
+            B = \begin{bmatrix} -(r + k_{PN}) & k_{NP} \\ k_{PN} & -(r + k_{NP}) \end{bmatrix}.
+
+        Both diagonal blocks are the same matrix ``B``, so its exponential is
+        ``[[E, 0], [-v h E, E]]`` with ``E = exp(h B)``, a 2x2 exponential with real
+        eigenvalues (its discriminant is ``((k_PN - k_NP)/2)^2 + k_PN k_NP >= 0``),
+        written in closed form. The steady state needs ``B^{-1}``, which exists
+        because ``det B = r (r + k_PN + k_NP) > 0`` for ``r0 > 0``.
 
         Parameters
         ----------
         dSL_dt : np.ndarray, shape (num_cells,)
-            Sarcomere shortening velocity [µm/s] for each cell.
+            Rate of change of sarcomere length [µm/s] for each cell.
         dt_xb : float
             Duration of the XB sub-step [s].
         """
-        A, rhs_vec = self._XB_system(dSL_dt)
+        A, rhs = self._XB_system(dSL_dt)
+        b00, b01, b10, b11 = A[:, 0, 0], A[:, 0, 2], A[:, 2, 0], A[:, 2, 2]
+        v = -A[:, 1, 0]
+        det = b00 * b11 - b01 * b10
 
-        # sol: (num_cells, 4), Fortran-order flatten of x_XB[:, :, c] per cell
-        sol = np.stack(
-            [self.x_XB[0, 0, :], self.x_XB[1, 0, :], self.x_XB[0, 1, :], self.x_XB[1, 1, :]],
-            axis=-1,
+        def solve_B(y0, y1):
+            return (b11 * y0 - b01 * y1) / det, (b00 * y1 - b10 * y0) / det
+
+        # steady state: B m0 = -r0, B m1 = v m0 - r1
+        s0P, s0N = solve_B(-rhs[:, 0], -rhs[:, 2])
+        s1P, s1N = solve_B(v * s0P - rhs[:, 1], v * s0N - rhs[:, 3])
+
+        # E = exp(dt_xb B) (Putzer: e^{tr/2 h} [cosh(s h) I + sinh(s h)/s (B - tr/2 I)])
+        half_tr = 0.5 * (b00 + b11)
+        s = np.sqrt(np.maximum(0.25 * (b00 - b11) ** 2 + b01 * b10, 0.0))
+        sh = s * dt_xb
+        scale = np.exp(half_tr * dt_xb)
+        c = np.cosh(sh)
+        f = np.where(
+            sh > 1e-8, np.sinh(sh) / np.where(s > 0.0, s, 1.0), dt_xb * (1.0 + sh**2 / 6.0)
         )
+        e00, e01 = scale * (c + f * (b00 - half_tr)), scale * f * b01
+        e10, e11 = scale * f * b10, scale * (c + f * (b11 - half_tr))
 
-        # Steady state: A @ sol_inf = -rhs_vec  →  sol_inf = -A^{-1} rhs_vec
-        try:
-            sol_inf = -np.linalg.solve(A, rhs_vec[:, :, np.newaxis])[:, :, 0]
-        except np.linalg.LinAlgError:
-            sol_inf = np.zeros((self.num_cells, 4))
-
-        delta = sol - sol_inf  # (num_cells, 4)
-        new_sol = sol_inf + np.einsum("nij,nj->ni", expm(dt_xb * A), delta)
-
-        self.x_XB[0, 0, :] = new_sol[:, 0]
-        self.x_XB[1, 0, :] = new_sol[:, 1]
-        self.x_XB[0, 1, :] = new_sol[:, 2]
-        self.x_XB[1, 1, :] = new_sol[:, 3]
+        X = self.x_XB
+        d0P, d0N = X[0, 0] - s0P, X[0, 1] - s0N
+        d1P, d1N = X[1, 0] - s1P, X[1, 1] - s1N
+        E0P, E0N = e00 * d0P + e01 * d0N, e10 * d0P + e11 * d0N
+        E1P, E1N = e00 * d1P + e01 * d1N, e10 * d1P + e11 * d1N
+        X[0, 0], X[0, 1] = s0P + E0P, s0N + E0N
+        X[1, 0], X[1, 1] = s1P + E1P - v * dt_xb * E0P, s1N + E1N - v * dt_xb * E0N
 
     # ------------------------------------------------------------------
     # Public interface (CardiacActivationModel)
@@ -480,10 +496,16 @@ class RDQ20MF(CardiacActivationModel):
         The RU integrator is explicit Euler, which is stable only at about
         ``self.dt`` (``dt_RU``, 2.5e-5 s). A longer step is therefore split into
         ``ceil(dt / self.dt)`` equal sub-steps, with ``Ca_val``, ``SL_vals`` and
-        ``dSL_vals`` held over the whole step. The crossbridges advance every
-        ``freqXB`` sub-steps and the Ca-dependent rates are refreshed every
-        ``freq_rates_update``, so a call with ``dt == self.dt`` takes exactly one
-        sub-step, as before.
+        ``dSL_vals`` held over the whole step. The crossbridges advance at every
+        sub-step, exactly for the RU state held (:meth:`_XB_advance`), and the
+        Ca-dependent rates are refreshed every ``freq_rates_update`` sub-steps.
+
+        The crossbridges used to advance once every 40 sub-steps (1 ms), over that
+        whole interval, with the velocity of the call on which the update fell. A
+        caller stepping more finely than 1 ms (a mechanics solver at 0.25 ms, an
+        electrophysiology model at 50 µs) then had a length change missed if it fell
+        between updates and counted for the whole millisecond if it fell on one, and
+        tension was a 1 ms staircase.
 
         Parameters
         ----------
@@ -494,11 +516,9 @@ class RDQ20MF(CardiacActivationModel):
         SL_vals : float or np.ndarray, shape (num_cells,)
             Current sarcomere lengths [µm].
         dSL_vals : float or np.ndarray, shape (num_cells,) or None
-            Sarcomere shortening velocity [µm/s]. If None, estimated from the
-            sarcomere length stored at the previous crossbridge update. That
-            estimate sees ``SL_vals`` change only between calls, so pass
-            ``dSL_vals`` when ``dt`` is longer than the crossbridge interval
-            (``freqXB`` sub-steps, 1 ms at ``dt_RU``).
+            Rate of change of sarcomere length [µm/s]. If None, the change of
+            ``SL_vals`` since the previous call divided by ``dt`` (zero on the first
+            call after construction or ``reset()``).
         """
         self._begin_step(dt)
 
@@ -517,22 +537,35 @@ class RDQ20MF(CardiacActivationModel):
             f"SL_vals shape {SL_vals.shape} must be ({self.num_cells},)"
         )
 
+        if dSL_vals is None:
+            # no previous call to difference against: take the length as constant
+            dSL_arr = (
+                np.zeros(self.num_cells)
+                if self._step_count == 0
+                else (SL_vals - self._SL_curr) / dt
+            )
+        elif np.isscalar(dSL_vals):
+            dSL_arr = np.full(self.num_cells, float(dSL_vals))
+        else:
+            dSL_arr = np.asarray(dSL_vals, dtype=float)
+
         # The tolerance keeps a step that is a whole multiple of dt_RU up to
         # round-off from gaining a sub-step.
         num_substeps = max(1, math.ceil(dt / self.dt - 1e-9))
         h = dt / num_substeps
+        self._SL_prev = self._SL_curr.copy()
         for _ in range(num_substeps):
-            self._substep(h, Ca_arr, SL_vals, dSL_vals)
+            self._substep(h, Ca_arr, SL_vals, dSL_arr)
 
     def _substep(
         self,
         h: float,
         Ca_arr: float | npt.NDArray[np.float64],
         SL_vals: npt.NDArray[np.float64],
-        dSL_vals: float | npt.NDArray[np.float64] | None,
+        dSL_arr: npt.NDArray[np.float64],
     ) -> None:
-        """One explicit-Euler RU step of length ``h`` (at most ``dt_RU``), and the
-        crossbridge step and rate refresh when they are due."""
+        """One explicit-Euler RU step of length ``h`` (at most ``dt_RU``), the
+        crossbridge step over the same ``h``, and the rate refresh when it is due."""
         # Update Ca-dependent rates (every freq_rates_update steps)
         if self._step_count % self.freq_rates_update == 0:
             self._update_Ca_rates(Ca_arr, SL_vals)
@@ -543,23 +576,10 @@ class RDQ20MF(CardiacActivationModel):
         # Clip to avoid tiny negative values from floating-point drift
         np.clip(self.x_RU, 0.0, 1.0, out=self.x_RU)
 
-        # --- XB step (every freqXB steps, i.e., every 1 ms at dt_RU) ---
-        if self._step_count > 0 and self._step_count % self.freqXB == 0:
-            if dSL_vals is not None:
-                if np.isscalar(dSL_vals):
-                    dSL_arr = np.full(self.num_cells, float(dSL_vals))
-                else:
-                    dSL_arr = np.asarray(dSL_vals, dtype=float)
-            else:
-                # Estimate from stored SL history
-                dSL_arr = (SL_vals - self._SL_prev) / (h * self.freqXB)
-            self._XB_advance(dSL_arr, h * self.freqXB)
+        # --- XB step, exact for the new RU state ---
+        self._XB_advance(dSL_arr, h)
 
-        # Store SL for velocity estimation
-        if self._step_count % self.freqXB == 0:
-            self._SL_prev = SL_vals.copy()
         self._SL_curr = SL_vals.copy()
-
         self._step_count += 1
 
     def compute_permissivity(self) -> npt.NDArray[np.float64]:

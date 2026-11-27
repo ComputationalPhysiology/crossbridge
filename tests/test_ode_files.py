@@ -421,13 +421,34 @@ def _params_per_cell(ns, **inputs):
     return params
 
 
+#: Length protocols for RDQ20MF's trajectory test [um], over 0.4 s.
+RDQ20MF_PROTOCOLS = {
+    "isometric": lambda t: np.full_like(t, 2.2),
+    "shortening": lambda t: 2.2 - 0.2 * np.clip((t - 0.05) / 0.1, 0, 1),
+    "stretch": lambda t: 2.0 + 0.3 * np.clip((t - 0.1) / 0.05, 0, 1),
+}
+
+
+@pytest.mark.parametrize("protocol", RDQ20MF_PROTOCOLS)
+def test_rdq20mf_trajectory_matches_its_ode(protocol):
+    """
+    RDQ20MF at 1 ms calls against Radau of its .ode, through a calcium transient.
+    The bounds are the class's explicit-Euler RU step at dt_RU and its rates refreshed
+    every 10th sub-step: 3e-4 of the peak for Ta and Ka (measured 1.2e-4 to 1.8e-4) and
+    1e-3 for bound_ca, the RU state itself (measured 5.3e-4). When its crossbridges
+    advanced once per 1 ms instead of at every sub-step, Ta sat 4e-3 to 6.5e-3 away.
+    """
+    Ca, SL, dSL = _inputs(RDQ20MF_PROTOCOLS[protocol], cmax=1.5)
+    errors = _trajectory_errors(RDQ20MF, None, {}, Ca, SL, dSL)
+    bounds = {"Ta": 3e-4, "Ka": 3e-4, "bound_ca": 1e-3}
+    assert all(errors[n] < bounds[n] for n in bounds), errors
+
+
 def test_rdq20mf_derivatives_match_its_ode():
     """
-    RDQ20MF steps its RU states and crossbridge moments at different rates (explicit
-    Euler at dt_RU for the RU, the exact matrix exponential every freqXB-th step for the
-    moments, rates refreshed every 10th), so its tension sits about 0.5-0.8% of the peak
-    from the ODE's own, depending on the protocol. What the file must reproduce is the
-    class's equations, so compare the derivatives and the three outputs at 50 states.
+    The trajectory test below bounds the class's integrator error (explicit Euler at
+    dt_RU for the RU, rates refreshed every 10th sub-step); this one checks the class's
+    equations exactly: the derivatives and the three outputs at 50 states.
     They are random, except that eleven sarcomere lengths are pinned to cover every
     piece of frac_SO, its boundaries and either side of it (asserted), and two cells
     have all their RU mass in one state, so that a mean-field denominator is 0: x_0000
