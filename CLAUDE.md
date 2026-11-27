@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025, Rice2008), all sharing one interface so they're swappable.
+- `crossbridge`: vectorized Python library of reduced-order cardiac myofilament activation models (RDQ18, RDQ20-MF, Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025, Rice2008, Tran2010), all sharing one interface so they're swappable.
 - Published on PyPI as `crossbridge`.
 - Model background/references live in `docs/models/`, not README.md (kept short by design).
 
@@ -87,7 +87,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   RDQ20MF refreshes its Ca-dependent rates every `freq_rates_update` (10) sub-steps and
   advances its crossbridges every `freqXB` (40). Tests that check a model's own dynamics still step at `model.dt`.
 - Each model file (`rdq18.py`, `rdq20mf.py`, `land17.py`, `lewalle2024.py`, `tewari2016.py`,
-  `marzban2020.py`, `musgrave2025.py`, `rice2008.py`) is self-contained and
+  `marzban2020.py`, `musgrave2025.py`, `rice2008.py`, `tran2010.py`) is self-contained (Tran2010
+  subclasses Rice2008 and reuses its integrator) and
   fully vectorized — NumPy arrays with a `num_cells` dimension, no per-cell Python loop.
   `advance_step` is the portable cross-model entry point; some models also keep an original,
   more detailed entry point (e.g. `RDQ18.advance_ODE`).
@@ -112,7 +113,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   invariant that makes batching legitimate: a matrix alone and the same matrix inside a mixed-norm
   batch of thousands come back bit-identical.
 - **`.ode` files.** `src/crossbridge/land2017.ode`, `lewalle2024.ode`, `rdq20mf.ode`, `tewari2016.ode`,
-  `marzban2020.ode`, `musgrave2025.ode` and `rice2008.ode` (package data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
+  `marzban2020.ode`, `musgrave2025.ode`, `rice2008.ode` and `tran2010.ode` (package data, `*.ode`) are the models as gotranx files, so gotranx can generate them for other targets
   (C, Julia, UFL) and a caller can supply their inputs from another model. Each class points at
   its file through `ODE_FILE` (`ClassVar[Path | None]` on `CardiacActivationModel`: `None` there and
   on `RDQ18`). RDQ18 has none on purpose: its 2176 states are 64 families over 34 neighbouring
@@ -178,7 +179,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   which `land2017.ode` and `lewalle2024.ode` need. Every test that needs it `importorskip`s it, so
   the suite passes without it, with those tests skipped; `tests/test_ode_file_attribute.py` and
   the generator test need no gotranx.
-- `Ta_max` semantics differ by model: `RDQ18` and `Rice2008` use it directly
+- `Ta_max` semantics differ by model: `RDQ18`, `Rice2008` and `Tran2010` use it directly
   (`Ta_max * compute_permissivity()`; `Rice2008`'s `Ta`, `Ka` and `Tp` are the paper's normalized
   force, ~1 at full activation at 37 °C, times `Ta_max`, default **1.0**, not kPa); the others compute tension
   intrinsically from their own params (`a_XB`/`Tref`/`kstiff1`,`kstiff2`) and only accept `Ta_max` for interface
@@ -219,6 +220,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   Fig. 4 not reproduced by Data S1 either. The model's equations (CellML/`.ode`, solved with Radau)
   reproduce Data S1's sample outputs (twitch 7e-6, F-Ca ramp 2.5e-5), and the class at 1 ms calls is
   2.1e-5 from that solution on the twitch; `tests/test_rice2008.py` pins each docstring claim.
+- `Tran2010` (guinea pig, Tran et al. 2010 Biophys J): `Rice2008` with a reversible MgATP/MgADP/Pi/H+
+  cycle (metabolites as params in mM, `pH`; refs `*_ref`), a subclass reusing its integrator through
+  the hooks `_x_names`, `_TMPC_REF`, `_set_constants` (P is a state, N derived). Follows the Physiome
+  CellML `tran_2009` (CC BY 3.0) also where the paper's Appendix differs (detachment to N, the
+  duty-fraction denominator, `hbT` in `XBprer_max`, rates at 310 K = 36.85 °C, `TmpC` 25.85,
+  `SLrest` 1.85), except [H+]: the CellML's `10^7/10^pH` uM is 10x, and the paper's Fig. 2B shows the
+  true `10^(6-pH)` is what the paper used. `tools/compare_tran2010_cellml.py` corrects that and agrees
+  to 3e-13. `tests/test_tran2010.py` pins Figs. 2A-D, 3A-B, 5 and the one non-reproducing claim (13%
+  MgADP rise: the model gives x2.28); the `release_at_peak` .ode bound is 1.7e-3 (`TRAN_BOUNDS`).
+  `demo/reproduce_figures_tran2010.py` plots Figs. 2-5; its steady states set the state directly
+  (private `_rates`/`_blocks`, checked against `advance_step`), and its Fig. 4 simulates the class at
+  the paper's 0.25% amplitude, which is not in the linear range (12% off the linearized `.ode` at 20 Hz).
 - `src/crossbridge/utils.py`: synthetic `calcium_trace()`/`sl_trace()` generators for tests/demos,
   not physiological data; `janssen_calcium(t, frequency)`, Marzban et al.'s fits to measured rat
   calcium transients at 2-10 Hz, which drive the Tewari2016/Marzban2020 demos and tests; and

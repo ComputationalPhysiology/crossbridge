@@ -327,6 +327,10 @@ class Rice2008(CardiacActivationModel):
     xXBprer: npt.NDArray[np.float64]
     xXBpostr: npt.NDArray[np.float64]
 
+    #: The states, in the order of the linear system (`_get_x`).
+    _x_names: tuple[str, ...] = _STATES
+    #: Temperature [degC] at which the rates are given; Q10 factors are Q ** ((TmpC - it) / 10).
+    _TMPC_REF = 37.0
     #: Attributes that evolve; see `CardiacActivationModel.get_state`.
     _state_names = (*_STATES, "_SL_prev", "_SL_curr", "_has_prev_step")
 
@@ -352,13 +356,20 @@ class Rice2008(CardiacActivationModel):
         self.p = type(self).default_parameters()
         if params:
             self.p.update(params)
-        p = self.p
-        self.dt = p["dt"]
+        self.dt = self.p["dt"]
+        self._set_constants()
+        self.reset()
 
-        # Rate constants at temperature TmpC (Eq. 3), fixed for the model's
-        # lifetime; those with a state-dependent factor are stored without it.
+    def _set_constants(self) -> None:
+        """
+        The rate constants at temperature TmpC (Eq. 3), fixed for the model's lifetime (those
+        with a state-dependent factor stored without it), and the occupancies that normalize
+        force (Eqs. 33-34).
+        """
+        p = self.p
+
         def q(Q: float) -> float:
-            return Q ** ((p["TmpC"] - 37.0) / 10.0)
+            return Q ** ((p["TmpC"] - self._TMPC_REF) / 10.0)
 
         xb = p["xbmodsp"]
         self._konT = p["kon"] * q(p["Qkon"])
@@ -378,8 +389,6 @@ class Rice2008(CardiacActivationModel):
         D0 = _cycle_denominator(fapp, gapp, hf, hb, gxb)
         self._XBprer_max = (fapp * hb + fapp * gxb) / D0
         self._XBpostr_max = fapp * hf / D0
-
-        self.reset()
 
     @classmethod
     def default_parameters(cls) -> dict:
@@ -695,10 +704,10 @@ class Rice2008(CardiacActivationModel):
         return out
 
     def _get_x(self) -> npt.NDArray[np.float64]:
-        return np.stack([getattr(self, name) for name in _STATES])
+        return np.stack([getattr(self, name) for name in self._x_names])
 
     def _set_x(self, x: npt.NDArray[np.float64]) -> None:
-        for i, name in enumerate(_STATES):
+        for i, name in enumerate(self._x_names):
             setattr(self, name, x[i])
 
     def _advance(

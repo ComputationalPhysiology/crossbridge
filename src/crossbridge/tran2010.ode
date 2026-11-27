@@ -1,0 +1,201 @@
+# Tran et al. (2010) metabolite-sensitive cardiac myofilament model, as crossbridge.Tran2010
+# implements it (Tran, Smith, Loiselle, Crampin, Biophys J 98:267-276,
+# https://doi.org/10.1016/j.bpj.2009.10.011): Rice et al. (2008) with a reversible,
+# MgATP-, MgADP-, Pi- and H+-dependent crossbridge cycle. Loaded through Tran2010.ODE_FILE;
+# tests/test_ode_files.py pins it to the class, tools/compare_tran2010_cellml.py to the CellML.
+#
+# Units: s, uM, um; metabolites in mM. Ta, Tp and Ka are the paper's normalized forces times
+# Ta_max (Ka per unit Lambda = SL / SL0). Crossbridge strain is measured in sarcomere length and
+# advances with dSL.
+#
+# The contract: the component `inputs` holds Ca, SL and dSL. Standalone they are
+# parameters, set before each step (zero-order hold, like advance_step). Subtracting
+# the component turns them into missing variables, the seam to an EP or tissue model.
+# The outputs are the intermediates Ta, Ka, bound_ca and Tp.
+#
+# The equations are the Physiome CellML's (tran_2009), including where the paper differs
+# (detachment to N, the duty-fraction denominator, hbT in XBprer_max, rates given at 310 K =
+# 36.85 degC, SLrest 1.85 um), except the proton concentration: [H+] = 10^(6 - pH) uM here,
+# where the CellML has ten times that (the class docstring gives the evidence, the paper's
+# Fig. 2B). Written without a division by a state that gotranx's singularity removal could
+# rewrite (CLAUDE.md).
+
+parameters("inputs",
+Ca = ScalarParam(0.09, unit="uM", description="cytosolic calcium"),
+SL = ScalarParam(1.9, unit="um", description="sarcomere length"),
+dSL = ScalarParam(0.0, unit="um/s", description="sarcomere length rate")
+)
+
+parameters("conditions",
+SL0 = ScalarParam(1.9, unit="um"),
+TmpC = ScalarParam(25.85, unit="degC"),
+Ta_max = 1.0
+)
+
+parameters("metabolites",
+MgATP = ScalarParam(5.0, unit="mM"),
+MgADP = ScalarParam(0.0363, unit="mM"),
+Pi = ScalarParam(2.0, unit="mM"),
+pH = 7.15,
+MgATP_ref = ScalarParam(5.0, unit="mM"),
+MgADP_ref = ScalarParam(0.036, unit="mM"),
+Pi_ref = ScalarParam(2.0, unit="mM"),
+pH_ref = 7.15,
+kdADP = ScalarParam(0.004, unit="mM"),
+kdHCa = ScalarParam(0.02, unit="uM"),
+m = 1.0,
+kMgATP = ScalarParam(15400.0, unit="mM**2")
+)
+
+parameters("geometry",
+len_thick = ScalarParam(1.65, unit="um"),
+len_hbare = ScalarParam(0.1, unit="um"),
+len_thin = ScalarParam(1.2, unit="um")
+)
+
+parameters("troponin",
+kon = ScalarParam(50.0, unit="1/(uM*s)"),
+koffL = ScalarParam(250.0, unit="1/s"),
+koffH = ScalarParam(25.0, unit="1/s"),
+koffmod = 1.0,
+perm50 = 0.5,
+nperm = 15.0,
+kn_p = ScalarParam(500.0, unit="1/s"),
+kp_n = ScalarParam(50.0, unit="1/s"),
+Qkon = 1.5,
+Qkoff = 1.3,
+Qkn_p = 1.6,
+Qkp_n = 1.6
+)
+
+parameters("crossbridges",
+fapp = ScalarParam(500.0, unit="1/s"),
+gapp = ScalarParam(70.0, unit="1/s"),
+gslmod = 6.0,
+hf = ScalarParam(2000.0, unit="1/s"),
+hfmdc = 5.0,
+hb = ScalarParam(400.0, unit="1/s"),
+gxb = ScalarParam(70.0, unit="1/s"),
+sigmap = 8.0,
+sigman = 1.0,
+xbmodsp = 0.2,
+Qfapp = 6.25,
+Qgapp = 2.5,
+Qhf = 6.25,
+Qhb = 6.25,
+Qgxb = 6.25,
+x_0 = ScalarParam(0.007, unit="um"),
+xPsi = 2.0
+)
+
+parameters("passive",
+SLrest = ScalarParam(1.85, unit="um"),
+PCon_t = 0.002,
+PExp_t = ScalarParam(10.0, unit="1/um"),
+SL_c = ScalarParam(2.25, unit="um"),
+PCon_c = 0.02,
+PExp_c = ScalarParam(70.0, unit="1/um")
+)
+
+# Troponin starts at its force-free steady state for Ca0 = 0.09 uM at 25.85 degC and the
+# default pH (= pH_ref): kon_T Ca0 / (kon_T Ca0 + koff_T), kon_T = kon Qkon^-1.1,
+# koff_T = koff koffmod Qkoff^-1.1 (koffH for TRPNCaH, koffL for TRPNCaL).
+states("troponin", TRPNCaH = 0.1332862885396281, TRPNCaL = 0.015145440444606416)
+states("regulatory_units", N_NoXB = 1.0, P_NoXB = 0.0, P = 0.0)
+states("crossbridges", XBprer = 0.0, XBpostr = 0.0)
+# xXBpostr starts at the powerstroke x_0 (its default).
+states("strain", xXBprer = 0.0, xXBpostr = 0.007)
+
+expressions("overlap")
+sovr_ze = Min(len_thick / 2.0, SL / 2.0)
+sovr_cle = Max(len_thin - SL / 2.0, len_hbare / 2.0)
+L_ov = Max(sovr_ze - sovr_cle, 0.0)
+SOVFthick = 2.0 * L_ov / (len_thick - len_hbare)
+SOVFthin = L_ov / len_thin
+
+expressions("metabolites")
+H = 10.0 ** (6.0 - pH)  # uM
+H_ref = 10.0 ** (6.0 - pH_ref)  # uM
+adp_factor = (MgADP_ref + kdADP) / (MgADP + kdADP)
+f_a1m = Pi / Pi_ref
+f_a2m = (H / H_ref) * (MgADP / MgADP_ref) * adp_factor
+f_a3p = (MgATP / MgATP_ref) * adp_factor
+# fxbT = f_a3m gxbT hfT fappT / (hbT gappT); concentrations in mM, H_ref too
+f_a3m = kdADP * Pi_ref * 1e-3 * H_ref / (MgATP_ref * kMgATP)
+
+expressions("rates")
+konT = kon * Qkon ** ((TmpC - 36.85) / 10.0) * (H_ref ** m + kdHCa ** m) / (H ** m + kdHCa ** m)
+koffHT = koffH * koffmod * Qkoff ** ((TmpC - 36.85) / 10.0)
+koffLT = koffL * koffmod * Qkoff ** ((TmpC - 36.85) / 10.0)
+kn_pbase = kn_p * Qkn_p ** ((TmpC - 36.85) / 10.0)
+kp_nbase = kp_n * Qkp_n ** ((TmpC - 36.85) / 10.0)
+fappT = fapp * xbmodsp * Qfapp ** ((TmpC - 36.85) / 10.0)
+gapp_base = gapp * xbmodsp * Qgapp ** ((TmpC - 36.85) / 10.0)
+hf_base = hf * xbmodsp * Qhf ** ((TmpC - 36.85) / 10.0)
+hbT = hb * xbmodsp * Qhb ** ((TmpC - 36.85) / 10.0)
+gxb_base = gxb * xbmodsp * Qgxb ** ((TmpC - 36.85) / 10.0)
+
+expressions("troponin")
+Ca_safe = Max(Ca, 0.0)
+dTRPNCaH_dt = konT * Ca_safe * (1.0 - TRPNCaH) - koffHT * TRPNCaH
+dTRPNCaL_dt = konT * Ca_safe * (1.0 - TRPNCaL) - koffLT * TRPNCaL
+Tropreg = (1.0 - SOVFthin) * TRPNCaL + SOVFthin * TRPNCaH
+
+expressions("crossbridge_rates")
+# The exponent arguments are capped at 20 (Rice2008._EXP_ARG_MAX); the cap binds only in fast
+# lengthening (Rice2008's docstring).
+gappT = gapp_base * (1.0 + (1.0 - SOVFthick) * gslmod)
+hfT = hf_base * exp(Min(-hfmdc * xXBprer * Abs(xXBprer) / (x_0 * x_0), 20.0))
+sigma = Conditional(Lt(xXBpostr, x_0), sigmap, sigman)
+gxbT = gxb_base * exp(Min(sigma * ((xXBpostr - x_0) / x_0) ** 2, 20.0))
+a1p = fappT
+a1m = gappT * f_a1m
+a2p = hfT
+a2m = hbT * f_a2m
+a3p = gxbT * f_a3p
+# a3m = fxbT = g3 a2p
+g3 = f_a3m * gxbT * fappT / (hbT * gappT)
+a3m = g3 * a2p
+
+expressions("regulatory_units")
+Tropreg_n = Max(Tropreg, 0.0) ** nperm
+permtot = sqrt(Tropreg_n / (Tropreg_n + perm50 ** nperm))
+kn_pT = kn_pbase * permtot
+kp_nT = kp_nbase / Max(permtot, 0.01)
+N = 1.0 - P - XBprer - XBpostr
+dN_NoXB_dt = -kn_pT * N_NoXB + kp_nT * P_NoXB
+dP_NoXB_dt = kn_pT * N_NoXB - kp_nT * P_NoXB
+# The CellML's: detached bridges return to N (the paper's Appendix returns them to P).
+dP_dt = kn_pT * N - (a1p + kp_nT) * P
+
+expressions("crossbridges")
+dXBprer_dt = a1p * P - (a1m + a2p) * XBprer + a2m * XBpostr
+dXBpostr_dt = a3m * P + a2p * XBprer - (a2m + a3p) * XBpostr
+
+expressions("strain")
+# xPsi / dutyprer = xPsi S / num_pre and xPsi a2p / dutypostr = xPsi a2p S / num_post, which
+# is xPsi S / (a1p + a3m + a1m g3) since num_post = a2p (a1p + a3m + a1m g3): no division by
+# a2p, which underflows in fast lengthening.
+S = a1m * a3p + a1m * a3m + a2p * a3p + a1p * a2m + a1p * a3p + a2m * a3m + a2p * a3m + a1m * a3m + a1p * a2p
+num_pre = a1p * a2m + a1p * a3p + a2m * a3m
+a_prer = xPsi * S / num_pre
+a_postr = xPsi * S / (a1p + a3m + a1m * g3)
+dxXBprer_dt = 0.5 * dSL + a_prer * (-a1p * xXBprer + a2m * (xXBpostr - x_0 - xXBprer))
+dxXBpostr_dt = 0.5 * dSL + a_postr * (xXBprer + x_0 - xXBpostr)
+
+expressions("force")
+# The occupancies at the base rates and reference metabolites (Appendix), with the CellML's
+# hbT in XBprer_max.
+fxb = f_a3m * gxb * hf * fapp / (hb * gapp)
+D0 = fxb * hb + fapp * hf + fxb * gapp + fapp * hb + fapp * gxb + fxb * hb + gapp * gxb + gapp * hb + gxb * hf
+XBprer_max = (fapp * hbT + fapp * gxb + fxb * hb) / D0
+XBpostr_max = (fxb * hb + fapp * hf + fxb * gapp) / D0
+Ta = Ta_max * SOVFthick * (XBprer * xXBprer + XBpostr * xXBpostr) / (x_0 * XBpostr_max)
+Ka = Ta_max * SL0 * SOVFthick * (XBprer + XBpostr) / (2.0 * x_0 * XBpostr_max)
+FrSBXB = (XBprer + XBpostr) / (XBprer_max + XBpostr_max)
+bound_ca = (1.0 - SOVFthin) * TRPNCaL + SOVFthin * (FrSBXB * TRPNCaH + (1.0 - FrSBXB) * TRPNCaL)
+
+expressions("passive")
+titin = Conditional(Ge(SL, SLrest), PCon_t * (exp(PExp_t * (SL - SLrest)) - 1.0), -PCon_t * (exp(PExp_t * (SLrest - SL)) - 1.0))
+collagen = Conditional(Gt(SL, SL_c), PCon_c * (exp(PExp_c * (SL - SL_c)) - 1.0), 0.0)
+Tp = Ta_max * (titin + collagen)

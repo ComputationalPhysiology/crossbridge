@@ -21,8 +21,9 @@ from crossbridge import (
     Musgrave2025,
     Rice2008,
     Tewari2016,
+    Tran2010,
 )
-from crossbridge.rice2008 import _EXP_ARG_MAX, _STATES
+from crossbridge.rice2008 import _EXP_ARG_MAX
 from crossbridge.utils import calcium_trace
 
 gotranx = pytest.importorskip("gotranx")
@@ -36,6 +37,7 @@ WITH_ODE: list[type] = [
     Marzban2020,
     Musgrave2025,
     Rice2008,
+    Tran2010,
 ]
 OUTPUTS: dict[type, tuple[str, ...]] = {
     Land2017: ("Ta", "Ka", "bound_ca", "Tp"),
@@ -45,11 +47,12 @@ OUTPUTS: dict[type, tuple[str, ...]] = {
     Marzban2020: ("Ta", "Ka", "bound_ca", "Tp"),
     Musgrave2025: ("Ta", "Ka", "bound_ca", "Tp"),
     Rice2008: ("Ta", "Ka", "bound_ca", "Tp"),
+    Tran2010: ("Ta", "Ka", "bound_ca", "Tp"),
 }
 #: Keys of `default_parameters()` that are not parameters of the ODE.
 NON_ODE = {"dt", "Ca0", "dt_RU"}
 #: Parameters of a file that its class takes from the constructor instead, with their defaults.
-ODE_ONLY: dict[type, dict[str, float]] = {Rice2008: {"Ta_max": 1.0}}
+ODE_ONLY: dict[type, dict[str, float]] = {Rice2008: {"Ta_max": 1.0}, Tran2010: {"Ta_max": 1.0}}
 #: Class parameters that the file spells differently: key -> (ODE parameter, value map).
 SWITCHES: dict[str, tuple[str, dict[str, float]]] = {
     "which_dep": (
@@ -954,17 +957,17 @@ def test_rice2008_matches_its_ode_with_rabbit_parameters(protocol):
     assert max(errors.values()) < RICE_BOUNDS.get(("rabbit", protocol), 1e-4), errors
 
 
-def test_rice2008_states_match_its_ode():
+def _check_states_match_its_ode(cls, params=None, ode_params=None):
     """N_NoXB and P_NoXB feed no output, so compare every state, not only the outputs."""
     Ca, SL, dSL = _inputs(MOMENT_PROTOCOLS["isometric"], cmax=3.0)
-    m = _module(Rice2008)
-    model = Rice2008(1)
-    names = [state.name for state in _load(Rice2008).states]
+    m = _module(cls)
+    model = cls(1, params=params)
+    names = [state.name for state in _load(cls).states]
     assert len(names) == 9
     y = m["init_state_values"]()
     for name in names:
         y[m["state_index"](name)] = _state_of(model, name)
-    p = m["init_parameter_values"]()
+    p = m["init_parameter_values"](**(ode_params or {}))
     iCa, iSL, idSL = (m["parameter_index"](n) for n in ("Ca", "SL", "dSL"))
     got: dict[str, list[float]] = {name: [] for name in names}
     ref: dict[str, list[float]] = {name: [] for name in names}
@@ -983,27 +986,35 @@ def test_rice2008_states_match_its_ode():
         assert np.abs(a - b).max() / peak < 1e-4, name
 
 
-def test_rice2008_derivatives_match_its_ode():
+def test_rice2008_states_match_its_ode():
+    _check_states_match_its_ode(Rice2008)
+
+
+def _check_derivatives_match_its_ode(cls, params=None):
     """
     The class's linear system at a state is the file's right-hand side. 60 random states,
     among them cells reaching each branch: permtot either side of 0.01, xXBpostr either side
-    of x_0, xXBprer of either sign, SL at 1.1 (no overlap), 1.3, 1.9 (SLrest), 2.25 (SL_c)
-    and 2.35, the exponent caps of hfmd and gxbmd (the raw argument past `_EXP_ARG_MAX`, so
-    the file's cap is the class's), and a negative calcium, which the class clamps in
-    `advance_step` and the file in `Max(Ca, 0)`. Each branch is asserted to be reached. The
-    outputs are compared at Ta_max 1 and 50, which scales Ta, Ka and Tp in both.
+    of x_0, xXBprer of either sign, SL at 1.1 (no overlap), 1.3, 1.85 and 1.9 (SLrest of
+    Tran2010 and Rice2008), 2.25 (SL_c) and 2.35, the exponent caps of hfmd and gxbmd (the raw
+    argument past `_EXP_ARG_MAX`, so the file's cap is the class's), and a negative calcium,
+    which the class clamps in `advance_step` and the file in `Max(Ca, 0)`. Each branch is
+    asserted to be reached. The outputs are compared at Ta_max 1 and 50, which scales Ta, Ka
+    and Tp in both. `params` go to the class and the file alike.
     """
     rng = np.random.default_rng(2)
     n = 60
-    model = Rice2008(n)
-    x_0 = model.p["x_0"]
+    params = {**cls.default_parameters(), **(params or {})}
+    ode_params = {k: v for k, v in params.items() if k not in NON_ODE}
+    model = cls(n, params=params)
+    x_0, hfmdc = model.p["x_0"], model.p["hfmdc"]
+    sigmap, sigman = model.p["sigmap"], model.p["sigman"]
     x = np.vstack(
         [
             rng.uniform(size=n),  # TRPNCaH
             rng.uniform(size=n),  # TRPNCaL
             rng.uniform(size=n),  # N_NoXB
             rng.uniform(size=n),  # P_NoXB
-            rng.uniform(0.0, 0.4, n),  # N
+            rng.uniform(0.0, 0.4, n),  # N (Rice2008) or P (Tran2010)
             rng.uniform(0.0, 0.2, n),  # XBprer
             rng.uniform(0.0, 0.2, n),  # XBpostr
             rng.normal(scale=0.005, size=n),  # xXBprer
@@ -1013,23 +1024,23 @@ def test_rice2008_derivatives_match_its_ode():
     x[7, :2] = -0.05  # compressed: the raw argument of hfmd far past 40
     x[8, 2:4] = (x_0 + 0.06, x_0 - 0.03)  # far from x_0, above and below: that of gxbmd
     SL = rng.uniform(1.4, 2.4, n)
-    SL[4:9] = [1.1, 1.3, 1.9, 2.25, 2.35]
+    SL[4:10] = [1.1, 1.3, 1.85, 1.9, 2.25, 2.35]
     Ca = rng.uniform(0.0, 5.0, n)
-    Ca[9] = -0.1  # an EP model's undershoot
+    Ca[10] = -0.1  # an EP model's undershoot
     dSL = rng.uniform(-3.0, 3.0, n)
     model._set_x(x)
     model._SL_curr = SL
 
     _, SOVFthin = model._overlap(SL)
     Tropreg = (1.0 - SOVFthin) * x[1] + SOVFthin * x[0]
-    T_n = Tropreg**15.0
-    permtot = np.sqrt(T_n / (T_n + 0.5**15.0))
+    T_n = Tropreg ** model.p["nperm"]
+    permtot = np.sqrt(T_n / (T_n + model.p["perm50"] ** model.p["nperm"]))
     assert np.any(permtot < 0.01) and np.any(permtot > 0.01)
     assert np.any(x[8] < x_0) and np.any(x[8] > x_0)
     assert np.any(x[7] < 0.0) and np.any(x[7] > 0.0)
     assert model._overlap(SL)[0][4] == 0.0
-    hf_arg = -5.0 * x[7] * np.abs(x[7]) / x_0**2
-    gxb_arg = np.where(x[8] < x_0, 8.0, 1.0) * ((x[8] - x_0) / x_0) ** 2
+    hf_arg = -hfmdc * x[7] * np.abs(x[7]) / x_0**2
+    gxb_arg = np.where(x[8] < x_0, sigmap, sigman) * ((x[8] - x_0) / x_0) ** 2
     assert np.all(hf_arg[:2] > _EXP_ARG_MAX) and np.all(gxb_arg[2:4] > _EXP_ARG_MAX)
     assert np.any(Ca < 0.0)
 
@@ -1037,20 +1048,23 @@ def test_rice2008_derivatives_match_its_ode():
     M = model._system(np.maximum(Ca, 0.0), dSL, model._rates(x, SL))
     expected = np.einsum("nij,nj->in", M, np.vstack([x, np.ones(n)]).T)
 
-    ns = _module(Rice2008)
+    ns = _module(cls)
     states = _states_by_name(ns, model)
+    base = ns["init_parameter_values"](**ode_params)
     for Ta_max in (1.0, 50.0):
-        scaled = Rice2008(n, Ta_max=Ta_max)
+        scaled = cls(n, Ta_max=Ta_max, params=params)
         scaled._set_x(x)
         scaled._SL_curr = SL
-        params = _params_per_cell(ns, Ca=Ca, SL=SL, dSL=dSL, Ta_max=np.full(n, Ta_max))
-        rhs = ns["rhs"](0.0, states, params)
-        monitors = ns["monitor_values"](0.0, states, params)
-        for row, name in enumerate(_STATES):
+        p = np.repeat(base[:, None], n, axis=1)
+        for name, values in dict(Ca=Ca, SL=SL, dSL=dSL, Ta_max=np.full(n, Ta_max)).items():
+            p[ns["parameter_index"](name)] = values
+        rhs = ns["rhs"](0.0, states, p)
+        monitors = ns["monitor_values"](0.0, states, p)
+        for row, name in enumerate(cls._x_names):
             np.testing.assert_allclose(
                 rhs[ns["state_index"](name)], expected[row], rtol=1e-12, atol=1e-12, err_msg=name
             )
-        for out in OUTPUTS[Rice2008]:
+        for out in OUTPUTS[cls]:
             np.testing.assert_allclose(
                 monitors[ns["monitor_index"](out)],
                 getattr(scaled, GETTERS[out])(),
@@ -1058,3 +1072,63 @@ def test_rice2008_derivatives_match_its_ode():
                 atol=1e-13 * Ta_max,
                 err_msg=f"{out} at Ta_max {Ta_max}",
             )
+
+
+def test_rice2008_derivatives_match_its_ode():
+    _check_derivatives_match_its_ode(Rice2008)
+
+
+#: Tran2010's parameters off their defaults, no two of them equal, the metabolites and their
+#: reference levels included (each within about +-20% of its default, so that a twitch still
+#: activates), passed to the class and to the file alike.
+TRAN_OFF_DEFAULTS = {
+    **{k: v for k, v in RICE_OFF_DEFAULTS.items() if k != "xbmodsp"},
+    "xbmodsp": 0.23,
+    "SLrest": 1.88,
+    "MgATP": 3.1,
+    "MgADP": 0.12,
+    "Pi": 6.5,
+    "pH": 6.9,
+    "MgATP_ref": 5.3,
+    "MgADP_ref": 0.034,
+    "Pi_ref": 2.2,
+    "pH_ref": 7.12,
+    "kdADP": 0.0045,
+    "kdHCa": 0.021,
+    "m": 1.07,
+    "kMgATP": 15900.0,
+}
+
+
+#: Bounds where Tran2010 is further than 1e-4 from the file at its shipped sub-steps, about 1.5
+#: times the error measured there. As for Rice2008, the file is not the cause: Radau, BDF and
+#: LSODA (rtol 1e-11) agree on Ta to 1.2e-10 of its peak, and the class's error (largest output,
+#: Ka) falls with its own sub-step: 1.15e-3 at the shipped `_TARGET_SUBSTEP` of 1e-4 s, 2.5e-4
+#: at 5e-5 and 5.7e-5 at 2.5e-5.
+TRAN_BOUNDS = {"release_at_peak": 1.7e-3}
+
+
+@pytest.mark.parametrize("protocol", sorted(RICE_PROTOCOLS))
+def test_tran2010_matches_its_ode(protocol):
+    Ca, SL, dSL = _inputs(RICE_PROTOCOLS[protocol], cmax=3.0)
+    errors = _trajectory_errors(Tran2010, {}, {}, Ca, SL, dSL)
+    assert max(errors.values()) < TRAN_BOUNDS.get(protocol, 1e-4), errors
+
+
+def test_tran2010_matches_its_ode_off_its_defaults():
+    Ca, SL, dSL = _inputs(PROTOCOLS["shorten_and_relengthen"], cmax=3.0)
+    errors = _trajectory_errors(Tran2010, TRAN_OFF_DEFAULTS, TRAN_OFF_DEFAULTS, Ca, SL, dSL)
+    assert max(errors.values()) < 1e-4, errors
+
+
+def test_tran2010_states_match_its_ode():
+    _check_states_match_its_ode(Tran2010)
+    params = {**Tran2010.default_parameters(), **TRAN_OFF_DEFAULTS}
+    _check_states_match_its_ode(
+        Tran2010, params, {k: v for k, v in params.items() if k not in NON_ODE}
+    )
+
+
+@pytest.mark.parametrize("off_defaults", [False, True])
+def test_tran2010_derivatives_match_its_ode(off_defaults):
+    _check_derivatives_match_its_ode(Tran2010, TRAN_OFF_DEFAULTS if off_defaults else None)
