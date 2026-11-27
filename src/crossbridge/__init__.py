@@ -9,6 +9,7 @@ from .tewari2016 import Tewari2016
 from .marzban2020 import Marzban2020
 from .musgrave2025 import Musgrave2025
 from .rice2008 import Rice2008
+from .tran2010 import Tran2010
 from . import utils
 from .utils import calcium_trace, sl_trace
 
@@ -26,6 +27,7 @@ MODEL_REGISTRY: dict[str, type[CardiacActivationModel]] = {
     "Marzban2020": Marzban2020,
     "Musgrave2025": Musgrave2025,
     "Rice2008": Rice2008,
+    "Tran2010": Tran2010,
 }
 
 meta = metadata("crossbridge")
@@ -45,7 +47,7 @@ def get_model(name: str) -> type[CardiacActivationModel]:
     name : str
         One of the keys in `MODEL_REGISTRY` (e.g. "RDQ18", "RDQ20MF",
         "Lewalle2024", "Tewari2016", "Marzban2020",
-        "Musgrave2025", "Rice2008").
+        "Musgrave2025", "Rice2008", "Tran2010").
 
     Returns
     -------
@@ -70,6 +72,7 @@ __all__ = [
     "Marzban2020",
     "Musgrave2025",
     "Rice2008",
+    "Tran2010",
     "MODEL_REGISTRY",
     "get_model",
     "utils",

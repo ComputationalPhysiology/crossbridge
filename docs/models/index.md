@@ -22,6 +22,8 @@ code changes.
 - **[Rice2008](rice2008.md)** — a rat model with a cooperative thin filament and strain-carrying
   crossbridges, whose calcium activation Tewari2016 takes over (Marzban2020 replaces it, keeping
   only its collagen force); its force is normalized, so it is scaled by `Ta_max`.
+- **[Tran2010](tran2010.md)** — Rice2008 with a reversible, thermodynamically constrained
+  crossbridge cycle sensitive to MgATP, MgADP, Pi and pH (guinea pig); normalized force, as Rice2008.
 
 
 (choosing-a-model)=
@@ -54,8 +56,9 @@ you want to be able to swap models.
 | `Marzban2020` | Thin filament, myosin OFF state + crossbridge moments | **Unused** — tension is computed from `params["kstiff1"]`, `params["kstiff2"]` | any (internal sub-steps of 0.2 ms) |
 | `Musgrave2025` | Troponin, tropomyosin + crossbridge fractions and strain moments | **Unused** — tension is computed from `params["K_myo"]`, `params["rho_myo"]` | any (internal sub-steps of 0.1 ms) |
 | `Rice2008` | Troponin, thin filament + crossbridge occupancies and mean strains | Used directly: `Ta = Ta_max *` normalized force (default 1.0) | any (internal sub-steps of at most 0.1 ms, more during fast length changes) |
+| `Tran2010` | As Rice2008, with metabolite-dependent rates | Used directly, as Rice2008 | as Rice2008 |
 
-`RDQ18` and `Rice2008` scale tension via the constructor's `Ta_max` argument; the other models compute
+`RDQ18`, `Rice2008` and `Tran2010` scale tension via the constructor's `Ta_max` argument; the other models compute
 tension intrinsically from their own parameter set (`a_XB`, `Tref`, `kstiff1`/`kstiff2`, `K_myo`) and
 accept `Ta_max` purely for interface compatibility. Check which case applies before relying on
 `Ta_max` when swapping models.
@@ -66,7 +69,7 @@ runtime via the small registry in `crossbridge`:
 ```python
 from crossbridge import get_model
 
-ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024", "Tewari2016", "Marzban2020", "Musgrave2025", "Rice2008"
+ModelClass = get_model("RDQ20MF")  # or "RDQ18", "Land2017", "Lewalle2024", "Tewari2016", "Marzban2020", "Musgrave2025", "Rice2008", "Tran2010"
 sarcomere = ModelClass(num_cells=100, params={"SL0": 2.0})
 ```
 
@@ -152,7 +155,7 @@ Two details worth knowing:
 (ode-files)=
 ## The models as `.ode` files
 
-`Land2017`, `Lewalle2024`, `RDQ20MF`, `Tewari2016`, `Marzban2020`, `Musgrave2025` and `Rice2008` are also written as
+`Land2017`, `Lewalle2024`, `RDQ20MF`, `Tewari2016`, `Marzban2020`, `Musgrave2025`, `Rice2008` and `Tran2010` are also written as
 [gotranx](https://github.com/finsberg/gotranx) `.ode` files, which ship with the package. gotranx
 generates Python, C, Julia or UFL code from an `.ode` file, so a model can run outside NumPy. With
 its `inputs` component removed (below), a model takes its inputs from other code, such as a cell
@@ -181,15 +184,16 @@ Every file follows the same contract:
 
 - **Units** are the classes': time in s, calcium in µM, length in µm. The outputs are in kPa.
   Land2017 and Lewalle2024 keep their stress parameters (`a`, `Tref`) in Pa, as the classes do.
-  Tewari2016, Marzban2020 and Musgrave2025 have their metabolite concentrations in mM.
-  Rice2008's outputs are in units of `Ta_max` (default 1.0), the paper's normalized force, not kPa.
+  Tewari2016, Marzban2020, Musgrave2025 and Tran2010 have their metabolite concentrations in mM.
+  Rice2008's and Tran2010's outputs are in units of `Ta_max` (default 1.0), the paper's normalized
+  force, not kPa.
 - **Inputs.** A component named `inputs` holds three parameters: `Ca` [µM], `SL` [µm] and `dSL`
   [µm/s]. In the file alone they are parameters, held over a step as `advance_step` holds them.
   Subtracting the component leaves exactly these three as missing variables, which a cell model
   or a tissue model then supplies.
 - **Outputs** are intermediates: `Ta` [kPa], `Ka` [kPa per unit $\Lambda = SL/SL_0$] and
   `bound_ca` [fraction], the values of `get_active_tension()`, `get_active_stiffness()` and
-  `bound_calcium_fraction()`. Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025 and Rice2008 also have `Tp`
+  `bound_calcium_fraction()`. Land2017, Lewalle2024, Tewari2016, Marzban2020, Musgrave2025, Rice2008 and Tran2010 also have `Tp`
   [kPa], the value of `get_passive_tension()`.
 - **Parameters** have the names and defaults of `default_parameters()`, without the keys that set
   up the class's integrator or its initial state: `dt`, `Ca0` and `dt_RU`.

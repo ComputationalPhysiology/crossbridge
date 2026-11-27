@@ -57,6 +57,12 @@ rice2008
 .. automodule:: crossbridge.rice2008
     :members:
 
+tran2010
+--------
+
+.. automodule:: crossbridge.tran2010
+    :members:
+
 utils
 -----
 
